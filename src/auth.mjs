@@ -39,6 +39,8 @@ export class BrowserSessionAuth extends EventEmitter {
     this.watched = new WeakSet();
     this.maintenance = null;
     this.refreshAttemptFor = null;
+    this.refreshRetries = 0;
+    this.lastRefreshFailedAt = null;
     this.stopping = false;
     this.lastChathubSeen = null;
     this.lastCaptureIssue = null;
@@ -76,6 +78,8 @@ export class BrowserSessionAuth extends EventEmitter {
     this.identity = candidate.identity;
     if (this.credential && candidate.expiresAt < this.credential.expiresAt) return false;
     this.credential = candidate;
+    this.refreshRetries = 0;
+    this.lastRefreshFailedAt = null;
     this.state = 'ready';
     this.emit('state');
     return true;
@@ -103,12 +107,18 @@ export class BrowserSessionAuth extends EventEmitter {
       if (this.state === 'ready' && this.status().state !== 'ready') {
         this.state = 'authentication_required'; this.emit('state');
       }
-      // One warm reload per expiring credential; never repeatedly interrupt MFA
-      // or reload a page simply because an unauthenticated HTTP client retries.
-      if (!isBusy() && this.credential && this.credential.expiresAt <= this.clock() + 120000 &&
-          this.refreshAttemptFor !== this.credential.token && !this.refreshPromise) {
-        this.refreshAttemptFor = this.credential.token;
-        this.refreshInBackground();
+      // One warm reload per expiring credential, with at most one bounded backoff retry
+      // on transient reload failures before hard expiration.
+      if (!isBusy() && this.credential && this.credential.expiresAt <= this.clock() + 120000 && !this.refreshPromise) {
+        const needsInitialRefresh = this.refreshAttemptFor !== this.credential.token;
+        const canRetryTransient = this.refreshAttemptFor === this.credential.token && (this.refreshRetries ?? 0) < 1 &&
+          this.credential.expiresAt > this.clock() + 70000 && this.lastRefreshFailedAt && (this.clock() - this.lastRefreshFailedAt >= 15000);
+        if (needsInitialRefresh || canRetryTransient) {
+          if (needsInitialRefresh) this.refreshRetries = 0;
+          else this.refreshRetries = (this.refreshRetries ?? 0) + 1;
+          this.refreshAttemptFor = this.credential.token;
+          this.refreshInBackground();
+        }
       }
     }, intervalMs);
     this.maintenance.unref?.();
@@ -138,7 +148,9 @@ export class BrowserSessionAuth extends EventEmitter {
       } finally {
         if (temporary && !temporary.isClosed?.()) await temporary.close({ runBeforeUnload: false }).catch(() => {});
       }
-    })().catch(() => {}).finally(() => {
+    })().catch(() => {
+      this.lastRefreshFailedAt = this.clock();
+    }).finally(() => {
       this.refreshPromise = null; this.refreshAbort = null;
       if (!this.stopping && !this.accountChanged && this.context) {
         this.state = this.credential && this.credential.expiresAt > this.clock() + 60000 ? 'ready' : 'authentication_required';

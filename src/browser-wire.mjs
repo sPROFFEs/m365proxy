@@ -8,8 +8,11 @@ export function isChathub(raw) {
 export class SignalRFrames {
   constructor(limit = 4194304) { this.buffer = ''; this.limit = limit; }
   feed(payload) {
-    this.buffer += typeof payload === 'string' ? payload : Buffer.from(payload).toString('utf8');
-    if (Buffer.byteLength(this.buffer) > this.limit) throw new ProxyError(502, 'browser_frame_limit', 'Browser protocol frame exceeded its local size limit.');
+    const chunk = typeof payload === 'string' ? payload : Buffer.from(payload).toString('utf8');
+    this.buffer += chunk;
+    if (this.buffer.length > this.limit || (this.buffer.length * 3 > this.limit && Buffer.byteLength(this.buffer) > this.limit)) {
+      throw new ProxyError(502, 'browser_frame_limit', 'Browser protocol frame exceeded its local size limit.');
+    }
     const frames = []; let i;
     while ((i = this.buffer.indexOf('\x1e')) !== -1) {
       const part = this.buffer.slice(0, i); this.buffer = this.buffer.slice(i + 1);

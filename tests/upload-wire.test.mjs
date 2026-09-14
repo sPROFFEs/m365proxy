@@ -14,6 +14,8 @@ test('SignalR parsing handles split records and multiple records per frame', () 
 test('SignalR malformed/oversized frames fail without raw payload', () => {
   assert.throws(() => new SignalRFrames().feed('TOKEN_BAD\x1e'), (e) => e.code === 'browser_protocol_changed' && !e.message.includes('TOKEN_BAD'));
   assert.throws(() => new SignalRFrames(4).feed('12345'), { code: 'browser_frame_limit' });
+  // Test multibyte UTF-8 byte boundary
+  assert.throws(() => new SignalRFrames(4).feed('€€'), { code: 'browser_frame_limit' }); // 2 euro symbols = 6 bytes in UTF-8
 });
 test('only the marker-correlated socket and invocation contribute text', () => {
   const ws = socket(), other = socket(); const c = new BrowserTurnCollector('nonce');

@@ -104,3 +104,24 @@ test('background refresh never reloads a pinned persistent conversation page', a
   assert.equal(tempClosed, 1);
   assert.equal(auth.status().state, 'ready');
 });
+
+test('transient background refresh failure allows one backoff retry before token expires', async (t) => {
+  let now = Date.now(), reloads = 0;
+  const auth = new BrowserSessionAuth({ ...settings, captureTimeoutMs: 10 }, { clock: () => now });
+  t.after(() => auth.close());
+  auth.context = { close: async () => {} };
+  auth.page = { reload: async () => { reloads++; } };
+  auth.capture(jwtUrl({ exp: Math.floor(now / 1000) + 110 }));
+  auth.enableMaintenance({ intervalMs: 5 });
+  // Initial refresh triggered
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(reloads, 1);
+  // Advance clock past backoff window (16s) but before hard expiry
+  now += 16000;
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(reloads, 2);
+  // Third retry should not happen
+  now += 16000;
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(reloads, 2);
+});

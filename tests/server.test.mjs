@@ -31,6 +31,17 @@ test('browser Origin and DNS-rebinding Host are rejected', async (t) => {
   });
   assert.equal(status, 403);
 });
+test('IPv6 and standard loopback Host headers are accepted', async (t) => {
+  const { base } = await fixture(t);
+  const port = new URL(base).port;
+  for (const hostHeader of [`127.0.0.1:${port}`, `localhost:${port}`, `[::1]:${port}`]) {
+    const status = await new Promise((resolve, reject) => {
+      const req = httpRequest(base + '/v1/models', { headers: { ...headers, Host: hostHeader } }, (res) => { res.resume(); resolve(res.statusCode); });
+      req.on('error', reject); req.end();
+    });
+    assert.equal(status, 200, `Host header ${hostHeader} should be accepted`);
+  }
+});
 test('JSON chat response has the expected OpenAI object shape', async (t) => {
   const { base } = await fixture(t); const response = await post(base, basic()); const result = await response.json();
   assert.equal(response.status, 200); assert.equal(result.object, 'chat.completion'); assert.equal(result.choices[0].message.content, 'hello');

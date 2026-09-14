@@ -8,6 +8,13 @@ const corePromise = workerData.coreModuleUrl ? import(workerData.coreModuleUrl) 
 // Prevent an unhandled rejection before the first run message arrives.
 corePromise.catch(() => {});
 
+function clearPendingTokens(reason = new ProxyError(502, 'session_closed', 'Upstream session discarded.')) {
+  for (const [id, pending] of pendingTokens.entries()) {
+    pendingTokens.delete(id);
+    try { pending.reject(reason); } catch {}
+  }
+}
+
 parentPort.on('message', async (message) => {
   if (message.type === 'token_result') {
     const pending = pendingTokens.get(message.tokenId);
@@ -19,6 +26,7 @@ parentPort.on('message', async (message) => {
   }
   if (message.type !== 'run' || running) return;
   running = true;
+  clearPendingTokens(new ProxyError(428, 'authentication_required', 'Previous token request superseded.'));
   const runId = message.runId; currentRunId = runId;
   const send = (payload) => parentPort.postMessage({ ...payload, runId });
   try {
@@ -49,6 +57,7 @@ parentPort.on('message', async (message) => {
       throttle: stream.throttle && Number.isFinite(stream.throttle.current) && Number.isFinite(stream.throttle.max)
         ? { current: stream.throttle.current, max: stream.throttle.max } : null });
   } catch (error) {
+    clearPendingTokens(error);
     send({ type: 'failed', code: publicError(error).code });
   } finally {
     running = false;

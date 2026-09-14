@@ -33,7 +33,9 @@ async function readBody(req, maxBytes) {
 
 async function write(res, value, signal) {
   signal?.throwIfAborted();
-  if (res.destroyed) throw new DOMException('Client disconnected.', 'AbortError');
+  if (res.destroyed || res.writableEnded || !res.socket || res.socket.destroyed) {
+    throw new DOMException('Client disconnected.', 'AbortError');
+  }
   if (!res.write(value)) await once(res, 'drain', { signal });
 }
 
@@ -159,6 +161,8 @@ async function writeOllamaStream(res, engine, request, { sessionId, signal, requ
 
 export function createProxyServer({ engine, apiKey, config, logger = () => {} }) {
   const server = createServer(async (req, res) => {
+    req.socket?.setKeepAlive?.(true, 10000);
+    req.socket?.setNoDelay?.(true);
     let heartbeat, timer, responseApi = false, ollamaApi = false;
     const requestId = randomUUID();
     const started = Date.now();
@@ -169,7 +173,19 @@ export function createProxyServer({ engine, apiKey, config, logger = () => {} })
     try {
       const host = req.headers.host ?? '';
       const expectedPort = server.address()?.port;
-      if (![`${config.host}:${expectedPort}`, `localhost:${expectedPort}`].includes(host)) throw new ProxyError(403, 'invalid_host', 'Only the local listener Host is accepted.');
+      const allowedHosts = new Set([
+        `${config.host}:${expectedPort}`,
+        `127.0.0.1:${expectedPort}`,
+        `localhost:${expectedPort}`,
+        `[::1]:${expectedPort}`,
+      ]);
+      if (expectedPort === 80) {
+        allowedHosts.add(config.host);
+        allowedHosts.add('127.0.0.1');
+        allowedHosts.add('localhost');
+        allowedHosts.add('[::1]');
+      }
+      if (!allowedHosts.has(host)) throw new ProxyError(403, 'invalid_host', 'Only the local listener Host is accepted.');
       if (req.headers.origin !== undefined || (req.headers['sec-fetch-site'] && req.headers['sec-fetch-site'] !== 'none')) throw new ProxyError(403, 'browser_origin_denied', 'Browser-origin calls are disabled. Use a local native client.');
       let path = new URL(req.url, `http://${host}`).pathname.replace(/\/+$/, '') || '/';
       const scoped = path.match(/^\/projects\/([a-zA-Z0-9][a-zA-Z0-9_-]{0,47})(\/.*)$/);

@@ -1,0 +1,16 @@
+# Copy to the ROOT of the project as .m365ignore; review for your project.
+# This is an example, not a guarantee that all secrets are excluded.
+private/
+internal-data/
+fixtures/customer-data/
+*.har
+*.trace
+*.dump
+*.sql
+**/TEST_RUN*
+**/*.tap.txt
+# Keep exported instructions/proposals from being reinjected next time.
+tarea.txt
+propuesta*.json
+proposal*.json
+workspaces.json

@@ -1,0 +1,5 @@
+{
+  "model": "m365-copilot",
+  "messages": [{"role": "user", "content": "Responde solo HOLA_LOCAL"}],
+  "stream": false
+}

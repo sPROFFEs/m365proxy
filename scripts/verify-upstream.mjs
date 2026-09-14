@@ -1,0 +1,14 @@
+import assert from 'node:assert/strict';
+import { loadCore } from '../src/core-loader.mjs';
+const core = await loadCore();
+const tool = { type: 'function', function: { name: 'echo', description: 'Return supplied text', parameters: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'], additionalProperties: false } } };
+assert.ok(core.getAvailableModels().includes('m365-copilot'));
+assert.equal(typeof core.formatMessages([{ role: 'user', content: 'Hello' }], [tool], 'auto'), 'string');
+const parsed = core.parseToolCalls('{"tool":"echo","arguments":{"text":"hello"}}', [tool]);
+assert.ok(parsed.hasToolCalls);
+assert.equal(parsed.toolCalls[0].function.name, 'echo');
+assert.deepEqual(JSON.parse(parsed.toolCalls[0].function.arguments), { text: 'hello' });
+const sentinel = new Error('AUTH_INJECTION_TEST_NO_NETWORK');
+const session = new core.ModelSession({ useAgent: false, getToken: async () => { throw sentinel; } });
+await assert.rejects(session.run('This must never be sent', 'm365-copilot', undefined, false), (e) => e === sentinel);
+console.log('cramt public-interface checks passed. No Microsoft request was made by these checks.');

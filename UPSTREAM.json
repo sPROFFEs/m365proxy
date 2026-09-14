@@ -1,0 +1,10 @@
+{
+  "repository": "https://github.com/cramt/m365-copilot-proxy.git",
+  "commit": "d7c6d8080bf2bb769c1949c2dfbe60bb7ca929c3",
+  "commitDate": "2026-08-17",
+  "revisionSource": "https://github.com/cramt/m365-copilot-proxy/commits/main/",
+  "license": "MIT",
+  "destination": "vendor/cramt",
+  "bundledInThisZip": false,
+  "note": "This archive contains the local extension and bootstrap. npm run setup fetches the entire pinned upstream source tree."
+}

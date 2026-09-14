@@ -1,0 +1,652 @@
+TAP version 13
+# Subtest: Chathub token is parsed without assuming local JWT signature validation
+ok 1 - Chathub token is parsed without assuming local JWT signature validation
+  ---
+  duration_ms: 1.899878
+  type: 'test'
+  ...
+# Subtest: reject unsupported token source {"host":"substrate.office.com.evil.invalid"}
+ok 2 - reject unsupported token source {"host":"substrate.office.com.evil.invalid"}
+  ---
+  duration_ms: 0.242877
+  type: 'test'
+  ...
+# Subtest: reject unsupported token source {"host":"example.invalid"}
+ok 3 - reject unsupported token source {"host":"example.invalid"}
+  ---
+  duration_ms: 0.747368
+  type: 'test'
+  ...
+# Subtest: reject unsupported token source {"host":"substrate.office.com:8443"}
+ok 4 - reject unsupported token source {"host":"substrate.office.com:8443"}
+  ---
+  duration_ms: 0.088384
+  type: 'test'
+  ...
+# Subtest: reject unsupported token source {"protocol":"http"}
+ok 5 - reject unsupported token source {"protocol":"http"}
+  ---
+  duration_ms: 0.169396
+  type: 'test'
+  ...
+# Subtest: reject unsupported token source {"exp":1}
+ok 6 - reject unsupported token source {"exp":1}
+  ---
+  duration_ms: 0.19234
+  type: 'test'
+  ...
+# Subtest: reject malformed JWT, wrong path and mismatched account path
+ok 7 - reject malformed JWT, wrong path and mismatched account path
+  ---
+  duration_ms: 0.263317
+  type: 'test'
+  ...
+# Subtest: status never includes credentials or account IDs
+ok 8 - status never includes credentials or account IDs
+  ---
+  duration_ms: 0.654197
+  type: 'test'
+  ...
+# Subtest: account changes invalidate state and remain latched until restart
+ok 9 - account changes invalidate state and remain latched until restart
+  ---
+  duration_ms: 0.665615
+  type: 'test'
+  ...
+# Subtest: expired credentials become authentication_required
+ok 10 - expired credentials become authentication_required
+  ---
+  duration_ms: 0.478262
+  type: 'test'
+  ...
+# Subtest: waiter timeout cleans listeners and asks for explicit browser interaction
+ok 11 - waiter timeout cleans listeners and asks for explicit browser interaction
+  ---
+  duration_ms: 7.35525
+  type: 'test'
+  ...
+# Subtest: waiter abort cleans listeners
+ok 12 - waiter abort cleans listeners
+  ---
+  duration_ms: 0.28472
+  type: 'test'
+  ...
+# Subtest: persistent-browser bootstrap attaches websocket listener before navigating
+ok 13 - persistent-browser bootstrap attaches websocket listener before navigating
+  ---
+  duration_ms: 5.40005
+  type: 'test'
+  ...
+# Subtest: simultaneous refresh waiters share a pending reload
+ok 14 - simultaneous refresh waiters share a pending reload
+  ---
+  duration_ms: 0.346683
+  type: 'test'
+  ...
+# Subtest: plain chat defaults to no tools
+ok 15 - plain chat defaults to no tools
+  ---
+  duration_ms: 1.31917
+  type: 'test'
+  ...
+# Subtest: developer/text arrays are normalized explicitly
+ok 16 - developer/text arrays are normalized explicitly
+  ---
+  duration_ms: 0.185049
+  type: 'test'
+  ...
+# Subtest: strict mode rejects unsupported temperature
+ok 17 - strict mode rejects unsupported temperature
+  ---
+  duration_ms: 1.315526
+  type: 'test'
+  ...
+# Subtest: strict mode rejects unsupported max_tokens
+ok 18 - strict mode rejects unsupported max_tokens
+  ---
+  duration_ms: 0.095103
+  type: 'test'
+  ...
+# Subtest: strict mode rejects unsupported response_format
+ok 19 - strict mode rejects unsupported response_format
+  ---
+  duration_ms: 0.08608
+  type: 'test'
+  ...
+# Subtest: strict mode rejects unsupported stop
+ok 20 - strict mode rejects unsupported stop
+  ---
+  duration_ms: 0.080301
+  type: 'test'
+  ...
+# Subtest: compat mode ignores common OpenAI tuning controls and records them
+ok 21 - compat mode ignores common OpenAI tuning controls and records them
+  ---
+  duration_ms: 0.916739
+  type: 'test'
+  ...
+# Subtest: legacy functions and function_call are translated in compat mode
+ok 22 - legacy functions and function_call are translated in compat mode
+  ---
+  duration_ms: 0.559955
+  type: 'test'
+  ...
+# Subtest: multimodal parts are rejected
+ok 23 - multimodal parts are rejected
+  ---
+  duration_ms: 0.414926
+  type: 'test'
+  ...
+# Subtest: duplicate tools are rejected
+ok 24 - duplicate tools are rejected
+  ---
+  duration_ms: 1.077677
+  type: 'test'
+  ...
+# Subtest: forced name must exist
+ok 25 - forced name must exist
+  ---
+  duration_ms: 0.478261
+  type: 'test'
+  ...
+# Subtest: none suppresses active definitions
+ok 26 - none suppresses active definitions
+  ---
+  duration_ms: 0.346142
+  type: 'test'
+  ...
+# Subtest: required without tools is rejected
+ok 27 - required without tools is rejected
+  ---
+  duration_ms: 0.277709
+  type: 'test'
+  ...
+# Subtest: orphan tool result is rejected
+ok 28 - orphan tool result is rejected
+  ---
+  duration_ms: 0.222676
+  type: 'test'
+  ...
+# Subtest: tool call IDs are correlated across all results
+ok 29 - tool call IDs are correlated across all results
+  ---
+  duration_ms: 0.517221
+  type: 'test'
+  ...
+# Subtest: partial multi-call results block the next completion
+ok 30 - partial multi-call results block the next completion
+  ---
+  duration_ms: 0.2321
+  type: 'test'
+  ...
+# Subtest: usage requests are accepted in compat mode without fabricating metrics
+ok 31 - usage requests are accepted in compat mode without fabricating metrics
+  ---
+  duration_ms: 0.286442
+  type: 'test'
+  ...
+# Subtest: unknown controls still fail in compat mode
+ok 32 - unknown controls still fail in compat mode
+  ---
+  duration_ms: 0.201684
+  type: 'test'
+  ...
+# Subtest: schema object validates required, extra properties and types
+ok 33 - schema object validates required, extra properties and types
+  ---
+  duration_ms: 0.619334
+  type: 'test'
+  ...
+# Subtest: schema local references, array bounds and oneOf work
+ok 34 - schema local references, array bounds and oneOf work
+  ---
+  duration_ms: 0.793548
+  type: 'test'
+  ...
+# Subtest: external refs and unsupported keywords fail closed
+ok 35 - external refs and unsupported keywords fail closed
+  ---
+  duration_ms: 0.208865
+  type: 'test'
+  ...
+# Subtest: numeric and array tuple constraints are enforced
+ok 36 - numeric and array tuple constraints are enforced
+  ---
+  duration_ms: 0.330428
+  type: 'test'
+  ...
+# Subtest: recursive schema has a bounded evaluation depth
+ok 37 - recursive schema has a bounded evaluation depth
+  ---
+  duration_ms: 0.170578
+  type: 'test'
+  ...
+# Subtest: nullable does not override enum assertions
+ok 38 - nullable does not override enum assertions
+  ---
+  duration_ms: 0.180422
+  type: 'test'
+  ...
+# Subtest: complex recursive branches cannot cause unbounded evaluation
+ok 39 - complex recursive branches cannot cause unbounded evaluation
+  ---
+  duration_ms: 2.590209
+  type: 'test'
+  ...
+# Subtest: regular-expression schemas are rejected rather than exposing a regex denial of service
+ok 40 - regular-expression schemas are rejected rather than exposing a regex denial of service
+  ---
+  duration_ms: 0.160493
+  type: 'test'
+  ...
+# Subtest: plain output streams text without fabricating usage
+ok 41 - plain output streams text without fabricating usage
+  ---
+  duration_ms: 5.26776
+  type: 'test'
+  ...
+# Subtest: tool output is buffered and converted to tool_calls
+ok 42 - tool output is buffered and converted to tool_calls
+  ---
+  duration_ms: 1.706816
+  type: 'test'
+  ...
+# Subtest: tool loop reuses exact-history session and sends only the new tool result
+ok 43 - tool loop reuses exact-history session and sends only the new tool result
+  ---
+  duration_ms: 1.026979
+  type: 'test'
+  ...
+# Subtest: an edited history never reuses a stale remote context
+ok 44 - an edited history never reuses a stale remote context
+  ---
+  duration_ms: 0.673856
+  type: 'test'
+  ...
+# Subtest: schema failures drop possibly divergent remote conversation state
+ok 45 - schema failures drop possibly divergent remote conversation state
+  ---
+  duration_ms: 0.972708
+  type: 'test'
+  ...
+# Subtest: one explicitly enabled formatting repair can correct invalid arguments
+ok 46 - one explicitly enabled formatting repair can correct invalid arguments
+  ---
+  duration_ms: 0.933679
+  type: 'test'
+  ...
+# Subtest: Disengaged is never retried by format repair
+ok 47 - Disengaged is never retried by format repair
+  ---
+  duration_ms: 0.539174
+  type: 'test'
+  ...
+# Subtest: quota errors do not trigger token refresh or conversation rotation
+ok 48 - quota errors do not trigger token refresh or conversation rotation
+  ---
+  duration_ms: 0.926268
+  type: 'test'
+  ...
+# Subtest: raw upstream errors are sanitized
+ok 49 - raw upstream errors are sanitized
+  ---
+  duration_ms: 0.560266
+  type: 'test'
+  ...
+# Subtest: compat mode maps client model aliases to the default upstream route
+ok 50 - compat mode maps client model aliases to the default upstream route
+  ---
+  duration_ms: 0.625273
+  type: 'test'
+  ...
+# Subtest: strict mode rejects unknown model aliases
+ok 51 - strict mode rejects unknown model aliases
+  ---
+  duration_ms: 0.25871
+  type: 'test'
+  ...
+# Subtest: single-user backpressure rejects overlapping requests
+ok 52 - single-user backpressure rejects overlapping requests
+  ---
+  duration_ms: 5.980516
+  type: 'test'
+  ...
+# Subtest: abort reaches the upstream and resets the session
+ok 53 - abort reaches the upstream and resets the session
+  ---
+  duration_ms: 4.767414
+  type: 'test'
+  ...
+# Subtest: session cache expiry and capacity bounds are enforced
+ok 54 - session cache expiry and capacity bounds are enforced
+  ---
+  duration_ms: 0.493996
+  type: 'test'
+  ...
+# Subtest: Linux scripts have valid Bash syntax
+ok 55 - Linux scripts have valid Bash syntax
+  ---
+  duration_ms: 9.167095
+  type: 'test'
+  ...
+# Subtest: installer help works without downloads or prerequisites
+ok 56 - installer help works without downloads or prerequisites
+  ---
+  duration_ms: 4.273219
+  type: 'test'
+  ...
+# Subtest: architecture mapping accepts x64 and arm64, rejects armv7
+ok 57 - architecture mapping accepts x64 and arm64, rejects armv7
+  ---
+  duration_ms: 8.633379
+  type: 'test'
+  ...
+# Subtest: Debian-family detection is permissive and includes Parrot derivatives
+ok 58 - Debian-family detection is permissive and includes Parrot derivatives
+  ---
+  duration_ms: 16.932364
+  type: 'test'
+  ...
+# Subtest: apt candidates prefer t64 and fall back to legacy names, not virtual packages
+ok 59 - apt candidates prefer t64 and fall back to legacy names, not virtual packages
+  ---
+  duration_ms: 11.560146
+  type: 'test'
+  ...
+# Subtest: Node manifest selects exactly one glibc Node 24 archive
+ok 60 - Node manifest selects exactly one glibc Node 24 archive
+  ---
+  duration_ms: 22.794624
+  type: 'test'
+  ...
+# Subtest: malformed Node checksums are rejected before archive extraction
+ok 61 - malformed Node checksums are rejected before archive extraction
+  ---
+  duration_ms: 5.270013
+  type: 'test'
+  ...
+# Subtest: installer dry-run has no filesystem side effects
+ok 62 - installer dry-run has no filesystem side effects
+  ---
+  duration_ms: 14.948789
+  type: 'test'
+  ...
+# Subtest: installer rejects unknown flags, incomplete values and wrong Node version
+ok 63 - installer rejects unknown flags, incomplete values and wrong Node version
+  ---
+  duration_ms: 25.133108
+  type: 'test'
+  ...
+# Subtest: PATH block quotes spaces and apostrophes and is idempotent in a shell
+ok 64 - PATH block quotes spaces and apostrophes and is idempotent in a shell
+  ---
+  duration_ms: 10.732907
+  type: 'test'
+  ...
+# Subtest: Bash/Zsh files are backed up, not duplicated, and custom ZDOTDIR is supported
+ok 65 - Bash/Zsh files are backed up, not duplicated, and custom ZDOTDIR is supported
+  ---
+  duration_ms: 113.086732
+  type: 'test'
+  ...
+# Subtest: PATH integration preserves symlinked dotfiles
+ok 66 - PATH integration preserves symlinked dotfiles
+  ---
+  duration_ms: 57.011705
+  type: 'test'
+  ...
+# Subtest: real installer/launcher works from unrelated cwd and retains key/profile on reinstall (synthetic backend)
+ok 67 - real installer/launcher works from unrelated cwd and retains key/profile on reinstall (synthetic backend) # SKIP
+  ---
+  duration_ms: 0.169786
+  type: 'test'
+  ...
+# Subtest: failed build or browser test keeps the previous active release (synthetic backend)
+ok 68 - failed build or browser test keeps the previous active release (synthetic backend) # SKIP
+  ---
+  duration_ms: 0.064577
+  type: 'test'
+  ...
+# Subtest: installer refuses unrelated command, arbitrary prefix and active profile lock
+ok 69 - installer refuses unrelated command, arbitrary prefix and active profile lock # SKIP
+  ---
+  duration_ms: 0.044367
+  type: 'test'
+  ...
+# Subtest: private Node path verifies checksum and uses versioned download URL (synthetic archive)
+ok 70 - private Node path verifies checksum and uses versioned download URL (synthetic archive) # SKIP
+  ---
+  duration_ms: 0.036295
+  type: 'test'
+  ...
+# Subtest: archive checksum mismatch fails without activation (synthetic download)
+ok 71 - archive checksum mismatch fails without activation (synthetic download) # SKIP
+  ---
+  duration_ms: 0.038548
+  type: 'test'
+  ...
+# Subtest: default apt stage limits sudo to system package management (synthetic apt/sudo)
+ok 72 - default apt stage limits sudo to system package management (synthetic apt/sudo) # SKIP
+  ---
+  duration_ms: 0.034862
+  type: 'test'
+  ...
+# Subtest: missing apt library stops before any apt install (synthetic apt/sudo)
+ok 73 - missing apt library stops before any apt install (synthetic apt/sudo) # SKIP
+  ---
+  duration_ms: 0.041252
+  type: 'test'
+  ...
+# Subtest: extension-only ZIP uses allowlist and excludes browser/session state
+ok 74 - extension-only ZIP uses allowlist and excludes browser/session state
+  ---
+  duration_ms: 75.366898
+  type: 'test'
+  ...
+# Subtest: full ZIP pins tracked fixture sources and bootstrap verifies extracted hashes offline
+ok 75 - full ZIP pins tracked fixture sources and bootstrap verifies extracted hashes offline
+  ---
+  duration_ms: 224.015162
+  type: 'test'
+  ...
+# Subtest: Responses text input and instructions translate to chat messages
+ok 76 - Responses text input and instructions translate to chat messages
+  ---
+  duration_ms: 1.18639
+  type: 'test'
+  ...
+# Subtest: Responses function calls and outputs round-trip into chat history
+ok 77 - Responses function calls and outputs round-trip into chat history
+  ---
+  duration_ms: 0.283107
+  type: 'test'
+  ...
+# Subtest: Responses unsupported tuning is ignored only in compatibility mode
+ok 78 - Responses unsupported tuning is ignored only in compatibility mode
+  ---
+  duration_ms: 0.368967
+  type: 'test'
+  ...
+# Subtest: chat tool calls become Responses function_call output items
+ok 79 - chat tool calls become Responses function_call output items
+  ---
+  duration_ms: 0.465602
+  type: 'test'
+  ...
+# Subtest: API key persists and is created with restrictive POSIX modes
+ok 80 - API key persists and is created with restrictive POSIX modes
+  ---
+  duration_ms: 7.873031
+  type: 'test'
+  ...
+# Subtest: profile lock prevents competing processes without stealing a stale lock
+ok 81 - profile lock prevents competing processes without stealing a stale lock
+  ---
+  duration_ms: 6.218254
+  type: 'test'
+  ...
+# Subtest: key equality does not accept prefixes
+ok 82 - key equality does not accept prefixes
+  ---
+  duration_ms: 0.615189
+  type: 'test'
+  ...
+# Subtest: configuration never exposes a non-loopback bind option
+ok 83 - configuration never exposes a non-loopback bind option
+  ---
+  duration_ms: 0.345572
+  type: 'test'
+  ...
+# Subtest: configuration validates browser, tool mode and numeric bounds
+ok 84 - configuration validates browser, tool mode and numeric bounds
+  ---
+  duration_ms: 0.269878
+  type: 'test'
+  ...
+# Subtest: compatibility mode is default and strict mode can be selected explicitly
+ok 85 - compatibility mode is default and strict mode can be selected explicitly
+  ---
+  duration_ms: 0.19909
+  type: 'test'
+  ...
+# Subtest: models and health require the real local API key
+ok 86 - models and health require the real local API key
+  ---
+  duration_ms: 37.128696
+  type: 'test'
+  ...
+# Subtest: browser Origin and DNS-rebinding Host are rejected
+ok 87 - browser Origin and DNS-rebinding Host are rejected
+  ---
+  duration_ms: 9.149247
+  type: 'test'
+  ...
+# Subtest: JSON chat response has the expected OpenAI object shape
+ok 88 - JSON chat response has the expected OpenAI object shape
+  ---
+  duration_ms: 10.516611
+  type: 'test'
+  ...
+# Subtest: SSE emits role, text, stop and DONE with one consistent ID
+ok 89 - SSE emits role, text, stop and DONE with one consistent ID
+  ---
+  duration_ms: 6.060896
+  type: 'test'
+  ...
+# Subtest: SSE tool calls have index, arguments, tool_calls finish and no raw envelope
+ok 90 - SSE tool calls have index, arguments, tool_calls finish and no raw envelope
+  ---
+  duration_ms: 7.864779
+  type: 'test'
+  ...
+# Subtest: SSE errors never include a successful finish_reason
+ok 91 - SSE errors never include a successful finish_reason
+  ---
+  duration_ms: 4.872443
+  type: 'test'
+  ...
+# Subtest: bad JSON and genuinely unsupported routes are explicit errors
+ok 92 - bad JSON and genuinely unsupported routes are explicit errors
+  ---
+  duration_ms: 9.739238
+  type: 'test'
+  ...
+# Subtest: unversioned OpenAI aliases are accepted
+ok 93 - unversioned OpenAI aliases are accepted
+  ---
+  duration_ms: 14.950752
+  type: 'test'
+  ...
+# Subtest: Responses API JSON adapter returns output_text and function items
+ok 94 - Responses API JSON adapter returns output_text and function items
+  ---
+  duration_ms: 8.498806
+  type: 'test'
+  ...
+# Subtest: Responses API SSE emits standard event names and completes
+ok 95 - Responses API SSE emits standard event names and completes
+  ---
+  duration_ms: 5.052675
+  type: 'test'
+  ...
+# Subtest: oversized body is rejected before inference
+ok 96 - oversized body is rejected before inference
+  ---
+  duration_ms: 2.134311
+  type: 'test'
+  ...
+# Subtest: Responses API converts emulated tool calls to function_call items
+ok 97 - Responses API converts emulated tool calls to function_call items
+  ---
+  duration_ms: 4.059776
+  type: 'test'
+  ...
+# Subtest: guarded call uses validated name, JSON args and fresh ID
+ok 98 - guarded call uses validated name, JSON args and fresh ID
+  ---
+  duration_ms: 2.324267
+  type: 'test'
+  ...
+# Subtest: ordinary code examples never become calls in guarded auto mode
+ok 99 - ordinary code examples never become calls in guarded auto mode
+  ---
+  duration_ms: 0.977374
+  type: 'test'
+  ...
+# Subtest: none is never parsed as calls
+ok 100 - none is never parsed as calls
+  ---
+  duration_ms: 0.96098
+  type: 'test'
+  ...
+# Subtest: required cannot silently degrade to prose
+ok 101 - required cannot silently degrade to prose
+  ---
+  duration_ms: 0.555598
+  type: 'test'
+  ...
+# Subtest: incorrect nonce and incomplete markers fail closed
+ok 102 - incorrect nonce and incomplete markers fail closed
+  ---
+  duration_ms: 0.27791
+  type: 'test'
+  ...
+# Subtest: unknown names and invalid argument schema fail closed
+ok 103 - unknown names and invalid argument schema fail closed
+  ---
+  duration_ms: 0.366974
+  type: 'test'
+  ...
+# Subtest: parallel false rejects multiple calls instead of truncating
+ok 104 - parallel false rejects multiple calls instead of truncating
+  ---
+  duration_ms: 0.21899
+  type: 'test'
+  ...
+# Subtest: parallel true preserves all validated calls
+ok 105 - parallel true preserves all validated calls
+  ---
+  duration_ms: 0.308986
+  type: 'test'
+  ...
+# Subtest: cramt mode uses upstream parser but retains validation
+ok 106 - cramt mode uses upstream parser but retains validation
+  ---
+  duration_ms: 0.464982
+  type: 'test'
+  ...
+# Subtest: real cramt exported interface and token injection (no Microsoft network)
+ok 107 - real cramt exported interface and token injection (no Microsoft network) # SKIP Pinned cramt could not be downloaded in the authoring environment. Run npm run setup and rerun npm test.
+  ---
+  duration_ms: 0.49669
+  type: 'test'
+  ...
+1..107
+# tests 107
+# suites 0
+# pass 99
+# fail 0
+# cancelled 0
+# skipped 8
+# todo 0
+# duration_ms 488.064155

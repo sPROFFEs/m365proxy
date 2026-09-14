@@ -1,0 +1,30 @@
+{
+  "name": "m365-copilot-local",
+  "version": "0.9.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "description": "Stable local OpenAI-compatible M365 Copilot proxy with named profiles, deterministic Chathub routing, workspace context, and optional full local script access",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "setup": "node scripts/bootstrap.mjs",
+    "fetch:upstream": "node scripts/bootstrap.mjs --sources-only",
+    "serve": "node src/cli.mjs serve",
+    "login": "node src/cli.mjs login",
+    "doctor": "node src/cli.mjs doctor",
+    "key": "node src/cli.mjs key",
+    "test": "node --test tests/*.test.mjs",
+    "verify:upstream": "node scripts/verify-upstream.mjs",
+    "demo:tools": "node examples/tool-loop.mjs",
+    "pack:full": "node scripts/pack.mjs --require-upstream",
+    "install:linux": "bash install.sh",
+    "check:browser": "node scripts/browser-setup.mjs check",
+    "pack": "node scripts/pack.mjs",
+    "status": "node src/cli.mjs status",
+    "probe": "node src/cli.mjs probe",
+    "menu": "node src/cli.mjs menu",
+    "guided": "node src/cli.mjs guided"
+  }
+}

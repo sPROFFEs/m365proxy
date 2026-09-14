@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "projects": [
+    {
+      "id": "test",
+      "root": "/home/parrot/Downloads/test",
+      "mode": "hybrid",
+      "write_mode": "auto"
+    },
+    {
+      "id": "review",
+      "root": "/home/parrot/projects/ClamAV-GUI",
+      "mode": "read",
+      "write_mode": "off"
+    }
+  ]
+}

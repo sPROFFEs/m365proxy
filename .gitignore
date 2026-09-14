@@ -1,0 +1,15 @@
+node_modules/
+vendor/cramt/
+*.zip
+*.log
+.env
+api-key
+process.lock
+browser-profile/
+msal-cache.json
+secrets.json
+process.guard
+.process-lock-*.tmp
+
+guided.json
+.guided-*.tmp

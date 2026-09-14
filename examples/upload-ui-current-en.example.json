@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "selectors": {
+    "composer": "[role=\"textbox\"][contenteditable=\"true\"]",
+    "attachButton": "button[aria-label=\"Add and manage sources\"], button[aria-label=\"Add content\"]",
+    "uploadMenu": "[role=\"menuitem\"]:has-text(\"Upload images and files\"), button:has-text(\"Upload images and files\")",
+    "fileInput": "input[type=\"file\"]"
+  }
+}

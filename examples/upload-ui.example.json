@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "selectors": {
+    "composer": "[role=\"textbox\"][contenteditable=\"true\"]",
+    "fileInput": "input[type=\"file\"]"
+  }
+}

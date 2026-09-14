@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "projects": [
+    {
+      "id": "clamav",
+      "root": "/home/parrot/projects/ClamAV-GUI",
+      "mode": "read",
+      "max_bytes": 65536,
+      "max_files": 16,
+      "max_file_bytes": 32768
+    },
+    {
+      "id": "clamav-patches",
+      "root": "/home/parrot/projects/ClamAV-GUI",
+      "mode": "patch"
+    }
+  ]
+}

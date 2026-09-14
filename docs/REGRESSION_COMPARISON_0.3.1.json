@@ -1,0 +1,33 @@
+{
+  "note": "Synthetic local reproduction against the exact previous ZIP. No Microsoft connection was used.",
+  "results": [
+    {
+      "version": "0.3.0",
+      "scenario": "missing_auth",
+      "outcome": "STILL_PENDING_AFTER_180MS",
+      "elapsed_ms": 181,
+      "busy_after_result": true
+    },
+    {
+      "version": "0.3.0",
+      "scenario": "upstream_ignores_abort",
+      "outcome": "STILL_PENDING_AFTER_180MS",
+      "elapsed_ms": 181,
+      "busy_after_result": true
+    },
+    {
+      "version": "0.3.1",
+      "scenario": "missing_auth",
+      "outcome": "authentication_required",
+      "elapsed_ms": 1,
+      "busy_after_result": false
+    },
+    {
+      "version": "0.3.1",
+      "scenario": "upstream_ignores_abort",
+      "outcome": "first_token_timeout",
+      "elapsed_ms": 42,
+      "busy_after_result": false
+    }
+  ]
+}

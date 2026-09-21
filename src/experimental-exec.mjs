@@ -12,7 +12,7 @@ import { ProxyError } from './errors.mjs';
 import { plainObject } from './util.mjs';
 
 const FORMAT = 'm365proxy.exec.v1';
-const BLOCK = /^```m365-exec[ \t]*\r?\n([\s\S]*?)^```[ \t]*$/gm;
+const BLOCK = /^```m365[-_]exec[ \t]*\r?\n([\s\S]*?)^```[ \t]*$/gm;
 const MAX_SCRIPT_BYTES = 65536;
 const SAFE_NAME = /^step-[0-9]{2}-[a-f0-9-]+\.(?:sh|py|ps1|cmd)$/;
 
@@ -25,6 +25,90 @@ function compactError(error) {
 function platformLanguages(platform = process.platform) {
   if (platform === 'win32') return ['powershell', 'python', 'cmd'];
   return ['bash', 'sh', 'python', 'powershell'];
+}
+
+function tryLenientJsonParse(raw, platform) {
+  let text = String(raw ?? '').trim();
+  // Strip inner ```json ... ``` code fence if nested inside
+  text = text.replace(/^```(?:json)?\s*\r?\n([\s\S]*?)\r?\n```$/i, '$1').trim();
+
+  // 1. Direct JSON parse
+  try {
+    const doc = JSON.parse(text);
+    if (plainObject(doc)) return doc;
+  } catch {}
+
+  // 2. Remove comments and trailing commas
+  let cleaned = text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\r\n]*/g, '$1');
+  cleaned = cleaned.replace(/,(\s*[}\]])/g, '$1');
+
+  try {
+    const doc = JSON.parse(cleaned);
+    if (plainObject(doc)) return doc;
+  } catch {}
+
+  // 3. Fix unescaped control characters/newlines inside double-quoted strings
+  let inString = false;
+  let escaped = false;
+  let sanitized = '';
+  for (let i = 0; i < cleaned.length; i++) {
+    const ch = cleaned[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        sanitized += ch;
+      } else if (ch === '\\') {
+        escaped = true;
+        sanitized += ch;
+      } else if (ch === '"') {
+        inString = false;
+        sanitized += ch;
+      } else if (ch === '\n') {
+        sanitized += '\\n';
+      } else if (ch === '\r') {
+        sanitized += '\\r';
+      } else if (ch === '\t') {
+        sanitized += '\\t';
+      } else {
+        sanitized += ch;
+      }
+    } else {
+      if (ch === '"') {
+        inString = true;
+      }
+      sanitized += ch;
+    }
+  }
+
+  try {
+    const doc = JSON.parse(sanitized);
+    if (plainObject(doc)) return doc;
+  } catch {}
+
+  // 4. Regex extraction for malformed JSON with script/command/language
+  if (text.startsWith('{')) {
+    const scriptMatch = text.match(/"(?:script|command|code)"\s*:\s*"([\s\S]*?)"\s*(?:,\s*"|\s*})/);
+    const langMatch = text.match(/"(?:language|shell)"\s*:\s*"([a-zA-Z0-9_-]+)"/);
+    if (scriptMatch) {
+      const script = scriptMatch[1].replace(/\\n/g, '\n').replace(/\\r/g, '\r').replace(/\\t/g, '\t').replace(/\\"/g, '"').replace(/\\\\/g, '\\');
+      return {
+        format: FORMAT,
+        language: langMatch ? langMatch[1] : (platform === 'win32' ? 'powershell' : 'bash'),
+        script,
+      };
+    }
+  }
+
+  // 5. If the block is pure raw shell/python script (not formatted as JSON at all)
+  if (!text.startsWith('{') && text.length > 0) {
+    let language = platform === 'win32' ? 'powershell' : 'bash';
+    if (/^#!\s*\/.*\b(python|python3)\b/m.test(text)) language = 'python';
+    else if (/^#!\s*\/.*\b(pwsh|powershell)\b/m.test(text)) language = 'powershell';
+    else if (/^#!\s*\/.*\b(sh)\b/m.test(text)) language = 'sh';
+    return { format: FORMAT, language, script: text };
+  }
+
+  return null;
 }
 
 export function executionInstruction({ platform = process.platform, maxSteps = 4, timeoutMs = 30000 } = {}) {
@@ -57,15 +141,17 @@ END EXPERIMENTAL LOCAL HOST ACTION BRIDGE.\n`;
 
 export function parseExecutionRequest(text, { platform = process.platform } = {}) {
   if (typeof text !== 'string') throw bad('Execution response must be text.');
-  const blocks = [...text.matchAll(BLOCK)];
+  const normalized = text.replace(/```m365[-_]exec[^\r\n]*\r?\n\s*```(?:json)?\s*\r?\n([\s\S]*?)\r?\n\s*```[^\r\n]*\r?\n\s*```/gi, '```m365-exec\n$1\n```');
+  const blocks = [...normalized.matchAll(BLOCK)];
   if (blocks.length > 1) throw bad('Return at most one m365-exec block per model turn.');
   if (!blocks.length) {
-    if (/```m365-exec/.test(text)) throw bad('The m365-exec block is incomplete or malformed.');
-    return { action: null, text };
+    if (/```m365[-_]exec/i.test(normalized)) throw bad('The m365-exec block is incomplete or malformed.');
+    return { action: null, text: normalized };
   }
-  let doc;
-  try { doc = JSON.parse(blocks[0][1]); } catch { throw bad('The m365-exec JSON is malformed.'); }
-  if (!plainObject(doc)) throw bad('Invalid m365-exec object.');
+  const rawBlock = blocks[0][1];
+  const doc = tryLenientJsonParse(rawBlock, platform);
+  if (!doc || !plainObject(doc)) throw bad('The m365-exec JSON is malformed.');
+
   // Be strict about executable bytes, but tolerant about harmless schema drift.
   // Models commonly emit command/code instead of script, add a description, or
   // spell shell as sh/bash. Because the block itself is explicitly m365-exec,
@@ -82,7 +168,7 @@ export function parseExecutionRequest(text, { platform = process.platform } = {}
   if (!platformLanguages(platform).includes(language)) throw bad(`Unsupported execution language for this host: ${language}.`);
   const bytes = Buffer.byteLength(rawScript, 'utf8');
   if (!bytes || bytes > MAX_SCRIPT_BYTES || rawScript.includes('\0')) throw bad(`Script must be 1-${MAX_SCRIPT_BYTES} UTF-8 bytes and contain no NUL byte.`);
-  return { action: { format: FORMAT, language, script: rawScript }, text: text.replace(blocks[0][0], '').trim() };
+  return { action: { format: FORMAT, language, script: rawScript }, text: normalized.replace(blocks[0][0], '').trim() };
 }
 
 function commandFor(language, script, platform) {

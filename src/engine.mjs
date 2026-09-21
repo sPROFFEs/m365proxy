@@ -281,7 +281,7 @@ export class ProxyEngine {
           let proposed;
           try { proposed = executor.parse(output); }
           catch (error) {
-            if (!(error instanceof ProxyError) || error.code !== 'exec_contract_error' || execRepairs >= 1) throw error;
+            if (!(error instanceof ProxyError) || error.code !== 'exec_contract_error' || execRepairs >= 2) throw error;
             execRepairs++; phase('exec_contract_repair');
             log('exec_contract_repair', { attempt: execRepairs });
             prompt = executor.repairPrompt(error);

@@ -33,6 +33,23 @@ test('execution parser accepts safe schema aliases without broadening executable
   assert.equal(a.action.language, 'bash'); assert.equal(a.action.script, 'pwd');
   const b = parseExecutionRequest('```m365-exec\n' + JSON.stringify({ format: 'm365proxy.exec.v1', language: 'python3', code: 'print(1)', action: 'run' }) + '\n```');
   assert.equal(b.action.language, 'python'); assert.equal(b.action.script, 'print(1)');
+
+  // Lenient parsing: trailing commas & comments
+  const c = parseExecutionRequest('```m365-exec\n{\n// inspect files\n"language": "bash",\n"script": "ls -la",\n}\n```');
+  assert.equal(c.action.language, 'bash'); assert.equal(c.action.script, 'ls -la');
+
+  // Lenient parsing: unescaped literal newlines in JSON strings
+  const d = parseExecutionRequest('```m365-exec\n{\n"language": "bash",\n"script": "echo line 1\necho line 2"\n}\n```');
+  assert.equal(d.action.language, 'bash'); assert.equal(d.action.script, 'echo line 1\necho line 2');
+
+  // Lenient parsing: nested ```json code block inside m365-exec
+  const e = parseExecutionRequest('```m365-exec\n```json\n{\n"language": "bash",\n"script": "git status"\n}\n```\n```');
+  assert.equal(e.action.language, 'bash'); assert.equal(e.action.script, 'git status');
+
+  // Lenient parsing: raw shell script directly inside m365-exec
+  const f = parseExecutionRequest('```m365-exec\n#!/bin/bash\ncat file.txt\n```');
+  assert.equal(f.action.language, 'bash'); assert.equal(f.action.script, '#!/bin/bash\ncat file.txt');
+
   assert.throws(() => parseExecutionRequest('```m365-exec\n' + JSON.stringify({ command: 'pwd', unexpected: true }) + '\n```'), { code: 'exec_contract_error' });
 });
 

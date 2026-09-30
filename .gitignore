@@ -1,5 +1,6 @@
 node_modules/
 vendor/cramt/
+codex/
 *.zip
 *.log
 .env

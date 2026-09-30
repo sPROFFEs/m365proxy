@@ -20,6 +20,8 @@
     "demo:tools": "node examples/tool-loop.mjs",
     "pack:full": "node scripts/pack.mjs --require-upstream",
     "install:linux": "bash install.sh",
+    "install:macos": "bash install-macos.sh",
+    "install:windows": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File install.ps1 -FromRepo",
     "check:browser": "node scripts/browser-setup.mjs check",
     "pack": "node scripts/pack.mjs",
     "status": "node src/cli.mjs status",

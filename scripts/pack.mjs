@@ -5,7 +5,6 @@ import { fileURLToPath } from 'node:url';
 import { join, relative, resolve, basename, isAbsolute } from 'node:path';
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
-
 const root = fileURLToPath(new URL('../', import.meta.url));
 const prefix = 'm365-copilot-local/';
 const manifest = JSON.parse(await readFile(join(root, 'UPSTREAM.json'), 'utf8'));
@@ -21,7 +20,7 @@ async function add(path, tracked = false) {
     files.push({ name: prefix + relative(root, path).replaceAll('\\', '/'), data: stat.isSymbolicLink() ? Buffer.from(await readlink(path)) : await readFile(path), mode: stat.mode });
   }
 }
-for (const entry of ['src', 'scripts', 'tests', 'examples', 'docs', 'package.json', 'UPSTREAM.json', 'README.md', 'install.sh', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'TEST_REPORT.md', '.gitignore']) {
+for (const entry of ['src', 'scripts', 'tests', 'examples', 'docs', 'package.json', 'UPSTREAM.json', 'README.md', 'install.sh', 'install-macos.sh', 'install-online.sh', 'install.ps1', 'LICENSE', 'THIRD_PARTY_NOTICES.md', 'TEST_REPORT.md', '.gitignore']) {
   try { await add(join(root, entry)); } catch (e) { if (e.code !== 'ENOENT') throw e; }
 }
 if (full) {
@@ -62,8 +61,7 @@ for (const file of files) {
   const record = Buffer.alloc(46);
   record.writeUInt32LE(0x02014b50); record.writeUInt16LE(0x0314, 4); record.writeUInt16LE(20, 6); record.writeUInt16LE(0x800, 8); record.writeUInt16LE(33, 14);
   record.writeUInt32LE(crc, 16); record.writeUInt32LE(data.length, 20); record.writeUInt32LE(data.length, 24); record.writeUInt16LE(name.length, 28);
-  record.writeUInt32LE((file.mode << 16) >>> 0, 38); record.writeUInt32LE(offset, 42);
-  parts.push(local, name, data); central.push(record, name); offset += local.length + name.length + data.length;
+  record.writeUInt32LE((file.mode << 16) >>> 0, 38); record.writeUInt32LE(offset, 42); parts.push(local, name, data); central.push(record, name); offset += local.length + name.length + data.length;
 }
 const directory = Buffer.concat(central), end = Buffer.alloc(22);
 end.writeUInt32LE(0x06054b50); end.writeUInt16LE(files.length, 8); end.writeUInt16LE(files.length, 10); end.writeUInt32LE(directory.length, 12); end.writeUInt32LE(offset, 16);

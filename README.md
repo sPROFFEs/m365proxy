@@ -27,34 +27,76 @@ Current version: **0.9.0**
 
 Version 0.9.0 focuses on predictable behavior and stable routing. EXEC requests use direct Chathub instead of automatically falling back to the browser composer or upload flow.
 
+The installer layer now includes one-line bootstrap paths for Linux, macOS, and native Windows. The Linux runtime keeps the existing hardened `flock`/`/proc` state lock; macOS and Windows use the cross-platform atomic lock implementation in `src/process-lock.mjs`.
+
 ## Requirements
 
-* **Node.js 24 or newer**
-* Access to **Microsoft 365 Copilot Web**
-* A browser session that can authenticate to Microsoft 365 Copilot
-* Linux for the currently documented packaged installer flow
+For normal one-line installation:
+
+* Access to **Microsoft 365 Copilot Web**.
+* A graphical browser session that can authenticate to Microsoft 365 Copilot.
+* Internet access to GitHub, npm, Node.js downloads, and Playwright browser downloads.
+* **Linux:** an ordinary desktop user; the installer can use `sudo` only for missing apt-based system dependencies.
+* **macOS:** Intel or Apple Silicon, plus Git. If Git is missing, install Xcode Command Line Tools or Homebrew Git.
+* **Windows:** Windows PowerShell 5.1+ or PowerShell 7. If Git is missing, the installer attempts to install Git for Windows with `winget`.
+
+The Linux, macOS, and Windows installers provision a private Node.js 24 runtime by default. **Node.js 24+ is still required when running directly from source without the installer.**
 
 The runtime executes under the privileges of the user that starts `m365proxy`.
 
 ## Quick start
 
-### Packaged Linux install
-
-The current packaged installation flow is:
+### Linux / macOS — one line
 
 ```bash
-unzip m365-copilot-local-linux-v0.9.0.zip
-cd m365-copilot-local
+curl -fsSL https://raw.githubusercontent.com/sPROFFEs/m365proxy/main/install-online.sh | bash
+```
+
+The bootstrap downloads a clean snapshot of the repository to a temporary directory and dispatches to `install.sh` on Linux or `install-macos.sh` on macOS. It removes the temporary source tree after installation.
+
+### Windows — one line
+
+Run from PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/sPROFFEs/m365proxy/main/install.ps1 | iex
+```
+
+When executed this way, `install.ps1` obtains Git if necessary, clones the repository to a temporary directory, reinvokes the checked-in installer, and removes the temporary checkout afterwards.
+
+> [!NOTE]
+> One-line installers execute code from the current `main` branch. If you prefer to inspect the installer first, download or clone the repository and run the platform-specific installer locally instead.
+
+### Local checkout / packaged install
+
+Linux:
+
+```bash
 bash install.sh
 export PATH="$HOME/.local/bin:$PATH"
 m365proxy menu
 ```
 
-Run `install.sh` as your normal desktop user, **not** with `sudo`. The installer only uses `sudo` when system package dependencies are missing.
+macOS:
+
+```bash
+bash install-macos.sh
+export PATH="$HOME/.local/bin:$PATH"
+m365proxy menu
+```
+
+Windows PowerShell:
+
+```powershell
+powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -FromRepo
+m365proxy menu
+```
+
+Run the installers as your normal desktop user. The Linux installer only uses `sudo` when apt-based system dependencies are missing. The macOS and Windows installers are per-user installs and do not install a daemon or service.
 
 ### Source / development commands
 
-From the repository root, the project exposes these npm commands:
+From the repository root, with Node.js 24+ available:
 
 ```bash
 npm run setup
@@ -63,6 +105,20 @@ npm run serve
 ```
 
 You can also use the CLI-oriented scripts documented later in this README.
+
+## Installer layout
+
+The platform installers use a per-user release layout instead of modifying the source checkout in place.
+
+* **Linux/macOS prefix:** `~/.local/share/m365proxy` by default.
+* **Linux/macOS command:** `~/.local/bin/m365proxy`.
+* **Windows prefix:** `%LOCALAPPDATA%\m365proxy` by default.
+* **Windows command:** `%LOCALAPPDATA%\m365proxy\bin\m365proxy.cmd`.
+* **Account/session state:** `~/.m365-copilot-local` / `%USERPROFILE%\.m365-copilot-local` unless `M365_LOCAL_STATE_DIR` overrides it.
+* **Playwright Chromium:** stored in a private installer-managed browser cache.
+* **Node.js:** private Node 24 by default; the system Node installation is left unchanged.
+
+Existing profile data, API keys, and browser session state are preserved across reinstalls.
 
 ## First configuration
 
@@ -96,6 +152,8 @@ m365proxy \
   --tool-mode guarded \
   --timeout-ms 300000
 ```
+
+On Windows, use a normal Windows path for `--workspace`, for example `C:\src\project`.
 
 ## Operating modes
 
@@ -182,6 +240,8 @@ Use FULL WORKSPACE only for directories and projects you are comfortable allowin
 
 If you do not need local execution, use **WORKSPACE READ-ONLY** or **CHAT ONLY**.
 
+The state directory is protected from concurrent proxy/installer ownership. Linux uses the existing kernel `flock` guard with `/proc` identity checks. macOS and Windows use an exclusive lock file and hard-link claim before stale-lock removal so a recovered stale lock cannot silently overwrite a newly acquired peer lock.
+
 ## Diagnostics
 
 Check the running service:
@@ -218,6 +278,8 @@ Microsoft 365 Copilot Web currently allows a maximum of three attachments per me
 * Advanced browser-upload behavior may require maintenance when the Copilot Web UI changes.
 * Attachment behavior is constrained by Copilot Web limits.
 * OpenAI compatibility does not mean that every feature of every OpenAI-compatible client is automatically supported.
+* The Linux installer can resolve apt-based Chromium system libraries automatically. macOS and Windows depend on the libraries and platform support expected by the pinned Playwright/Node dependency tree.
+* The native macOS and Windows installer paths should be exercised in CI or on representative hosts before treating them as production-supported release targets.
 
 ## What changed in 0.9.0
 
@@ -231,6 +293,18 @@ Version 0.9.0 prioritizes stability over prompt-driven heuristics:
 * Tasks that depend on real project or host state can trigger a bounded local-inspection enforcement turn.
 * Browser upload for non-EXEC profiles uses the stable upload path.
 * The interactive menu prioritizes the three recommended modes and moves upload/hybrid and auto-write behavior under Advanced.
+
+### Installer additions
+
+The cross-platform installer patch adds:
+
+* `install-online.sh` — one-line Linux/macOS bootstrap;
+* `install-macos.sh` — native macOS per-user installer with private Node 24 and Playwright Chromium;
+* `install.ps1` — native Windows per-user installer and PowerShell one-line bootstrap;
+* `scripts/macos/launcher.sh` — installed macOS launcher;
+* `scripts/windows/launcher.mjs` and `launcher.cmd` — installed Windows launcher;
+* cross-platform profile locking while preserving the existing Linux hardened lock;
+* packaging support for the new installer files.
 
 ## npm scripts
 
@@ -251,6 +325,9 @@ The repository currently exposes the following project commands:
 | `npm run verify:upstream` | Verify upstream state                          |
 | `npm run check:browser`   | Check browser setup                            |
 | `npm run demo:tools`      | Run the tool-loop example                      |
+| `npm run install:linux`   | Run the Linux installer                        |
+| `npm run install:macos`   | Run the macOS installer                        |
+| `npm run install:windows` | Run the Windows installer from PowerShell      |
 | `npm run pack`            | Build a package                                |
 | `npm run pack:full`       | Build a package with required upstream content |
 
@@ -265,6 +342,32 @@ More implementation details are available in:
 * [Third-party notices](THIRD_PARTY_NOTICES.md)
 
 ## Troubleshooting
+
+### The one-line installer cannot download the repository
+
+Linux/macOS: confirm `curl` can reach both `raw.githubusercontent.com` and `codeload.github.com` over HTTPS.
+
+Windows: confirm PowerShell can reach `raw.githubusercontent.com` and that Git is installed or `winget` is available to install it.
+
+### Git is missing on macOS
+
+Install either Xcode Command Line Tools:
+
+```bash
+xcode-select --install
+```
+
+or Git with Homebrew, then rerun the one-line installer.
+
+### `m365proxy` is not found after installation
+
+Open a new terminal first. On Linux/macOS you can also activate the default command directory immediately:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+On Windows, inspect the per-user PATH and confirm `%LOCALAPPDATA%\m365proxy\bin` is present.
 
 ### The client cannot connect
 
@@ -299,6 +402,16 @@ For tasks that require real project state, use FULL WORKSPACE or an appropriate 
 
 Prefer direct Chathub modes unless you specifically need advanced upload/hybrid behavior. Browser-upload flows are more exposed to Copilot Web UI changes.
 
+### The profile is reported as locked after a crash
+
+First make sure no proxy or dedicated authentication browser is still running, then run:
+
+```bash
+m365proxy unlock
+```
+
+The unlock path validates stale ownership metadata; it does not kill a live process.
+
 ## Contributing
 
 Issues, bug reports, documentation improvements, and pull requests are welcome.
@@ -314,6 +427,8 @@ When reporting a problem, include:
 * minimal reproduction steps.
 
 Do not include authentication secrets, session data, API keys, or private workspace content.
+
+For installer reports, also include whether the install was started from a local checkout or the one-line bootstrap and whether a private or system Node runtime was selected.
 
 ## License
 

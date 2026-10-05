@@ -1,3 +1,163 @@
+param(
+    [switch] $FromRepo,
+    [switch] $Yes,
+    [switch] $UseSystemNode,
+    [switch] $NoPath,
+    [switch] $SkipBrowserCheck,
+    [switch] $DryRun,
+    [string] $NodeVersion = 'latest',
+    [string] $Prefix,
+    [string] $BinDir
+)
+
+Set-StrictMode -Version 2.0
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
+
+function Fail([string] $Message) { throw $Message }
+if ($env:OS -ne 'Windows_NT') {
+    Fail 'install.ps1 is for native Windows. On Linux/macOS use install-online.sh.'
+}
+function Note([string] $Message) { Write-Host "`n[m365proxy] $Message" }
+function Invoke-Checked([string] $File, [object[]] $Arguments) {
+    & $File @Arguments
+    if ($LASTEXITCODE -ne 0) { throw "$File exited with code $LASTEXITCODE." }
+}
+function Refresh-Path {
+    $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    $user = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $env:Path = (($machine, $user) -join ';').Trim(';')
+}
+function Ensure-Git {
+    $git = Get-Command git.exe -ErrorAction SilentlyContinue
+    if ($git) { return $git.Source }
+    $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
+    if (-not $winget) { Fail 'Git is required and winget is not available. Install Git for Windows, then rerun.' }
+    Note 'Git is missing; installing Git for Windows with winget.'
+    & $winget.Source install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements
+    if ($LASTEXITCODE -ne 0) { Fail "winget could not install Git (exit $LASTEXITCODE)." }
+    Refresh-Path
+    $git = Get-Command git.exe -ErrorAction SilentlyContinue
+    if (-not $git) {
+        $candidate = Join-Path $env:ProgramFiles 'Git\cmd\git.exe'
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
+        Fail 'Git was installed but is not visible in this shell. Open a new PowerShell window and rerun.'
+    }
+    return $git.Source
+}
+function Add-UserPath([string] $Directory) {
+    $current = [Environment]::GetEnvironmentVariable('Path', 'User')
+    if ($null -eq $current) { $current = '' }
+    $parts = @($current -split ';' | Where-Object { $_ -and $_.Trim() })
+    $needle = $Directory.TrimEnd('\')
+    $exists = $false
+    foreach ($part in $parts) {
+        if ($part.Trim().TrimEnd('\').Equals($needle, [StringComparison]::OrdinalIgnoreCase)) { $exists = $true; break }
+    }
+    if (-not $exists) {
+        $updated = if ($current.Trim()) { $current.TrimEnd(';') + ';' + $Directory } else { $Directory }
+        [Environment]::SetEnvironmentVariable('Path', $updated, 'User')
+    }
+    if (-not (($env:Path -split ';') | Where-Object { $_.TrimEnd('\').Equals($needle, [StringComparison]::OrdinalIgnoreCase) })) {
+        $env:Path = "$Directory;$env:Path"
+    }
+}
+function Get-NodeMajorVersion([string] $NodePath) {
+    $versionText = (& $NodePath --version).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        Fail "Node failed while checking its version: $NodePath"
+    }
+    if ($versionText -notmatch '^v(?<major>[0-9]+)\.') {
+        Fail "Could not parse Node version: $versionText"
+    }
+    return [int] $Matches['major']
+}
+
+# When invoked as: irm .../install.ps1 | iex, first obtain a clean repo snapshot
+# and reinvoke the checked-in installer from disk.
+$localPackage = $null
+if ($PSScriptRoot) { $localPackage = Join-Path $PSScriptRoot 'package.json' }
+$hasRepo = $PSScriptRoot -and (Test-Path -LiteralPath $localPackage -PathType Leaf) -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'UPSTREAM.json') -PathType Leaf)
+if (-not $FromRepo -and -not $hasRepo) {
+    $git = Ensure-Git
+    $tmp = Join-Path ([IO.Path]::GetTempPath()) ('m365proxy-online-' + [Guid]::NewGuid().ToString('N'))
+    try {
+        New-Item -ItemType Directory -Path $tmp | Out-Null
+        $repo = Join-Path $tmp 'm365proxy'
+        Note 'Downloading sPROFFEs/m365proxy from GitHub.'
+        Invoke-Checked $git @('clone', '--depth', '1', '--branch', 'main', 'https://github.com/sPROFFEs/m365proxy.git', $repo)
+        $script = Join-Path $repo 'install.ps1'
+        $powershell = (Get-Command powershell.exe -ErrorAction Stop).Source
+        & $powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $script -FromRepo -Yes
+        $code = $LASTEXITCODE
+        if ($code -ne 0) { throw "m365proxy installer exited with code $code." }
+    } finally {
+        if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
+    }
+    return
+}
+$SourceRoot = $PSScriptRoot
+if (-not $SourceRoot -or -not (Test-Path -LiteralPath (Join-Path $SourceRoot 'UPSTREAM.json') -PathType Leaf)) {
+    Fail 'Run install.ps1 from the m365proxy repository, or use the documented one-line installer.'
+}
+if (-not $Prefix) { $Prefix = Join-Path $env:LOCALAPPDATA 'm365proxy' }
+if (-not $BinDir) { $BinDir = Join-Path $Prefix 'bin' }
+$Prefix = [IO.Path]::GetFullPath($Prefix)
+$BinDir = [IO.Path]::GetFullPath($BinDir)
+$SourceRoot = [IO.Path]::GetFullPath($SourceRoot)
+if ($Prefix.Contains("`n") -or $Prefix.Contains("`r") -or $Prefix.Contains('"')) { Fail 'The installation prefix contains unsupported characters.' }
+if ($BinDir.Contains("`n") -or $BinDir.Contains("`r") -or $BinDir.Contains('"')) { Fail 'The bin directory contains unsupported characters.' }
+if ($Prefix.TrimEnd('\').Equals($SourceRoot.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) { Fail 'Use a dedicated installation prefix outside the source checkout.' }
+if ($UseSystemNode -and $NodeVersion -ne 'latest') { Fail '-UseSystemNode cannot be combined with -NodeVersion.' }
+if ($NodeVersion -ne 'latest' -and $NodeVersion -notmatch '^24\.[0-9]+\.[0-9]+$') { Fail '-NodeVersion must be latest or a stable 24.x.y release.' }
+$archName = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
+switch -Regex ($archName) {
+    '^(AMD64|x86_64)$' { $Arch = 'x64'; break }
+    '^(ARM64|aarch64)$' { $Arch = 'arm64'; break }
+    default { Fail "Unsupported Windows architecture: $archName. Requires x64 or arm64." }
+}
+Write-Host @"
+Installation plan
+  Platform:      Windows $Arch
+  Application:   $Prefix\releases\...
+  Command:       $BinDir\m365proxy.cmd
+  Node:          $(if ($UseSystemNode) { 'existing Node >=24 + npm' } else { "private Node 24 ($NodeVersion)" })
+  User PATH:     $(if ($NoPath) { 'unchanged' } else { $BinDir })
+  Browser:       Playwright Chromium, private download cache
+  Account data:  $env:USERPROFILE\.m365-copilot-local (existing profile/key preserved)
+No Microsoft sign-in or service auto-start occurs during installation.
+"@
+if ($DryRun) { return }
+if (-not $Yes) {
+    $answer = Read-Host 'Continue? [y/N]'
+    if ($answer -notmatch '^[yY]([eE][sS])?$') { Write-Host 'Cancelled.'; return }
+}
+$git = Ensure-Git
+$installedBin = Join-Path $Prefix 'bin'
+if (-not $BinDir.TrimEnd('\').Equals($installedBin.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) {
+    $externalLauncher = Join-Path $BinDir 'm365proxy.cmd'
+    if (Test-Path -LiteralPath $externalLauncher -PathType Leaf) {
+        $existingShim = Get-Content -LiteralPath $externalLauncher -Raw -ErrorAction SilentlyContinue
+        if ($existingShim -notmatch 'm365proxy-managed-shim-v1') {
+            Fail 'An unrelated m365proxy.cmd already exists in the requested bin directory.'
+        }
+    }
+}
+$marker = Join-Path $Prefix '.m365proxy-install'
+if (Test-Path -LiteralPath $Prefix) {
+    $entries = @(Get-ChildItem -LiteralPath $Prefix -Force -ErrorAction SilentlyContinue)
+    if ($entries.Count -gt 0) {
+        if (-not (Test-Path -LiteralPath $marker -PathType Leaf) -or (Get-Content -LiteralPath $marker -Raw).Trim() -ne 'm365proxy-user-install-v1') {
+            Fail 'Non-empty prefix does not belong to this installer; refusing to overwrite it.'
+        }
+    }
+}
+New-Item -ItemType Directory -Force -Path $Prefix, (Join-Path $Prefix 'runtime'), (Join-Path $Prefix 'releases'), (Join-Path $Prefix 'bin'), (Join-Path $Prefix 'browsers') | Out-Null
+[IO.File]::WriteAllText($marker, "m365proxy-user-install-v1`n", (New-Object Text.UTF8Encoding($false)))
+$temp = Join-Path $Prefix ('.download-' + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $temp | Out-Null
+$guard = $null
 $release = $null
 try {
     if ($UseSystemNode) {
@@ -126,3 +286,9 @@ try {
     if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue }
 }
 $launcher = Join-Path $BinDir 'm365proxy.cmd'
+if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) { Fail 'Installation completed but the launcher was not created.' }
+& $launcher --help
+if ($LASTEXITCODE -ne 0) { Fail "Installed launcher failed its help smoke test with code $LASTEXITCODE." }
+Write-Host "`nInstallation completed. Open a new terminal if PATH was updated, then run:"
+Write-Host '  m365proxy menu'
+Write-Host 'No Microsoft session has been tested by this installer.'

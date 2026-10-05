@@ -1,294 +1,695 @@
-param(
-    [switch] $FromRepo,
-    [switch] $Yes,
-    [switch] $UseSystemNode,
-    [switch] $NoPath,
-    [switch] $SkipBrowserCheck,
-    [switch] $DryRun,
-    [string] $NodeVersion = 'latest',
-    [string] $Prefix,
-    [string] $BinDir
+#!/usr/bin/env bash
+# m365proxy installer for Linux.
+#
+# Distribution policy:
+#   - Hard requirements: Linux + x86_64/amd64 or arm64/aarch64.
+#   - No Debian/Kali/Parrot/Ubuntu whitelist.
+#   - When automatic system dependencies are enabled, any distro exposing
+#     apt-get + apt-cache is allowed. Package availability is detected at runtime.
+#   - Unknown/derivative distributions produce a warning, not a hard failure.
+#
+# Run this script as the normal desktop user, not with sudo.
+# sudo is used only for apt when system dependencies must be installed.
+
+set -Eeuo pipefail
+umask 077
+
+SOURCE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+
+# -----------------------------------------------------------------------------
+# Helpers
+# -----------------------------------------------------------------------------
+
+m365_die() {
+  printf 'ERROR: %s\n' "$*" >&2
+  exit 1
+}
+
+m365_note() {
+  printf '\n[m365proxy] %s\n' "$*"
+}
+
+m365_warn() {
+  printf 'WARNING: %s\n' "$*" >&2
+}
+
+m365_arch() {
+  case "$1" in
+    x86_64|amd64)
+      printf 'x64\n'
+      ;;
+    aarch64|arm64)
+      printf 'arm64\n'
+      ;;
+    *)
+      printf 'Unsupported architecture: %s (requires x86_64/amd64 or arm64/aarch64).\n' "$1" >&2
+      return 1
+      ;;
+  esac
+}
+
+m365_is_debian_like() {
+  local text=" ${ID:-} ${ID_LIKE:-} "
+  [[ "$text" == *debian* ||
+     "$text" == *ubuntu* ||
+     "$text" == *kali* ||
+     "$text" == *parrot* ||
+     "$text" == *linuxmint* ||
+     "$text" == *pop* ]]
+}
+
+m365_candidate() {
+  local name
+  for name in "$@"; do
+    if LC_ALL=C apt-cache policy "$name" 2>/dev/null \
+      | awk '/Candidate:/ && $2 != "(none)" { ok=1 } END { exit !ok }'; then
+      printf '%s\n' "$name"
+      return 0
+    fi
+  done
+
+  printf 'No apt candidate for any of: %s\n' "$*" >&2
+  return 1
+}
+
+m365_chromium_packages() {
+  # Resolve package-name transitions dynamically instead of tying the installer
+  # to a distro/version whitelist. This covers traditional Debian package names
+  # and the t64 transition used by newer Debian/testing-derived distributions.
+  local group
+  local -a options
+
+  for group in \
+    'libasound2t64 libasound2' \
+    'libatk1.0-0t64 libatk1.0-0' \
+    'libatk-bridge2.0-0t64 libatk-bridge2.0-0' \
+    'libatspi2.0-0t64 libatspi2.0-0' \
+    'libcups2t64 libcups2' \
+    'libglib2.0-0t64 libglib2.0-0' \
+    'libgtk-3-0t64 libgtk-3-0' \
+    'libnss3' \
+    'libnspr4' \
+    'libdbus-1-3' \
+    'libdrm2' \
+    'libexpat1' \
+    'libgbm1' \
+    'libpango-1.0-0' \
+    'libcairo2' \
+    'libx11-6' \
+    'libxcb1' \
+    'libxcomposite1' \
+    'libxdamage1' \
+    'libxext6' \
+    'libxfixes3' \
+    'libxkbcommon0' \
+    'libxrandr2' \
+    'libxshmfence1' \
+    'libxss1' \
+    'libx11-xcb1' \
+    'libpangocairo-1.0-0' \
+    'fonts-liberation' \
+    'fonts-noto-color-emoji' \
+    'xdg-utils'; do
+      read -r -a options <<< "$group"
+      m365_candidate "${options[@]}" || return 1
+  done
+}
+
+m365_checksum_entry() {
+  # Exactly one official Node 24 glibc Linux archive matching this architecture.
+  local manifest=$1
+  local arch=$2
+  local requested=${3:-latest}
+
+  awk -v arch="$arch" -v wanted="$requested" '
+    $2 ~ ("^node-v24\\.[0-9]+\\.[0-9]+-linux-" arch "\\.tar\\.xz$") {
+      name=$2
+      ver=name
+      sub(/^node-v/, "", ver)
+      sub(/-linux-.*/, "", ver)
+      if (wanted == "latest" || wanted == ver) {
+        hash=$1
+        file=name
+        n++
+      }
+    }
+    END {
+      if (n != 1 || length(hash) != 64 || hash ~ /[^0-9a-fA-F]/) exit 1
+      print tolower(hash), file
+    }' "$manifest"
+}
+
+# -----------------------------------------------------------------------------
+# Defaults / arguments
+# -----------------------------------------------------------------------------
+
+PREFIX=${XDG_DATA_HOME:-$HOME/.local/share}/m365proxy
+BIN_DIR=$HOME/.local/bin
+NODE_VERSION=latest
+SYSTEM_DEPS=1
+SYSTEM_NODE=0
+EDIT_PATH=1
+ASSUME_YES=0
+DRY_RUN=0
+CHECK_BROWSER=1
+
+usage() {
+  cat <<'HELP'
+Usage: bash install.sh [options]
+
+Installs the local M365 proxy and the m365proxy command for the current user.
+
+Linux policy:
+  * No distro-name/version whitelist.
+  * Debian, Kali, Parrot, Ubuntu, Mint and other derivatives are accepted.
+  * Any other Linux distro is also accepted when its required dependencies are
+    already installed (--no-system-deps).
+  * Automatic dependency installation works on apt-based systems exposing
+    apt-get and apt-cache. Package names are detected at runtime.
+
+Requires Internet and an ordinary desktop user account. Run WITHOUT sudo.
+
+  --yes                 Accept installation; sudo may still ask for a password.
+  --no-system-deps      Do not invoke sudo/apt; OS libraries must already exist.
+  --use-system-node     Reuse installed Node >=24 plus npm instead of private Node.
+  --node-version X.Y.Z  Pin a stable Node 24 release; default resolves latest 24.x.
+  --prefix PATH         User-owned installation directory.
+  --bin-dir PATH        Launcher directory; default ~/.local/bin.
+  --no-path             Do not edit Bash/Zsh startup files.
+  --skip-browser-check  Skip the local about:blank Chromium smoke test.
+  --dry-run             Print the plan without changes, downloads or sudo.
+  -h, --help            Show this help.
+
+Defaults:
+  private Node 24 + npm, pinned cramt source/dependencies, Playwright Chromium,
+  required shared libraries and PATH integration for Bash/Zsh.
+
+Microsoft login/MFA is performed manually later by running:
+
+  m365proxy
+HELP
+}
+
+need_value() {
+  [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || m365_die "Missing value for $1"
+}
+
+while (($#)); do
+  case "$1" in
+    --yes|-y)
+      ASSUME_YES=1
+      ;;
+    --no-system-deps)
+      SYSTEM_DEPS=0
+      ;;
+    --use-system-node)
+      SYSTEM_NODE=1
+      ;;
+    --no-path)
+      EDIT_PATH=0
+      ;;
+    --skip-browser-check)
+      CHECK_BROWSER=0
+      ;;
+    --dry-run)
+      DRY_RUN=1
+      ;;
+    --node-version)
+      need_value "$@"
+      NODE_VERSION=${2#v}
+      shift
+      ;;
+    --prefix)
+      need_value "$@"
+      PREFIX=$2
+      shift
+      ;;
+    --bin-dir)
+      need_value "$@"
+      BIN_DIR=$2
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      m365_die "Unknown option: $1. Use --help."
+      ;;
+  esac
+  shift
+done
+
+# -----------------------------------------------------------------------------
+# Platform detection: capability-based, not distro-whitelist-based
+# -----------------------------------------------------------------------------
+
+[[ $(uname -s) == Linux ]] || m365_die 'This installer currently requires Linux.'
+ARCH=$(m365_arch "$(uname -m)") || exit 1
+
+# /etc/os-release is informational only. Missing metadata does NOT block install.
+ID=''
+ID_LIKE=''
+VERSION_ID=''
+PRETTY_NAME='Unknown Linux'
+if [[ -r /etc/os-release ]]; then
+  # shellcheck disable=SC1091
+  source /etc/os-release
+fi
+
+DISTRO_LABEL=${PRETTY_NAME:-${ID:-Unknown Linux}}
+
+if ((SYSTEM_DEPS)); then
+  command -v apt-get >/dev/null || m365_die \
+    "Automatic system-dependency installation requires apt-get. This distro is not blocked: install the browser/system libraries yourself and rerun with --no-system-deps."
+
+  command -v apt-cache >/dev/null || m365_die \
+    "Automatic system-dependency installation requires apt-cache. Install apt utilities or rerun with --no-system-deps."
+
+  if m365_is_debian_like; then
+    m365_note "Detected Debian-like/apt-based system: $DISTRO_LABEL"
+  else
+    m365_warn "Unrecognized distro family: $DISTRO_LABEL"
+    m365_warn 'No distro whitelist is enforced. apt package candidates will be resolved dynamically and Chromium will be smoke-tested.'
+  fi
+else
+  if ! m365_is_debian_like; then
+    m365_warn "Unrecognized distro family: $DISTRO_LABEL"
+    m365_warn 'Continuing because --no-system-deps was selected; required native libraries must already be installed.'
+  fi
+fi
+
+[[ "$NODE_VERSION" == latest || "$NODE_VERSION" =~ ^24\.[0-9]+\.[0-9]+$ ]] \
+  || m365_die '--node-version must be a stable 24.x.y release.'
+
+if ((SYSTEM_NODE)) && [[ "$NODE_VERSION" != latest ]]; then
+  m365_die '--use-system-node cannot be combined with --node-version.'
+fi
+
+for item in "$PREFIX" "$BIN_DIR"; do
+  [[ "$item" == /* && "$item" != *$'\n'* && "$item" != *$'\r'* ]] \
+    || m365_die 'Installation paths must be absolute and may not contain line breaks.'
+done
+
+command -v realpath >/dev/null || m365_die 'realpath is required (normally provided by coreutils).'
+
+PREFIX=$(realpath -m -- "$PREFIX")
+BIN_DIR=$(realpath -m -- "$BIN_DIR")
+
+[[ "$BIN_DIR" != *:* ]] || m365_die 'The bin directory cannot contain a colon (PATH separator).'
+
+[[ "$PREFIX" != / &&
+   "$PREFIX" != "$HOME" &&
+   "$PREFIX" != "$SOURCE" &&
+   "$PREFIX" != /usr* &&
+   "$PREFIX" != /etc* &&
+   "$PREFIX" != /bin* ]] \
+  || m365_die 'Use a dedicated user-owned prefix, not a system directory or your source/home directory.'
+
+[[ "$SOURCE/" != "$PREFIX/"* ]] \
+  || m365_die 'Extract the ZIP outside the installation prefix before reinstalling.'
+
+cat <<PLAN
+
+Installation plan
+  Distribution: $DISTRO_LABEL
+  Architecture: $ARCH
+  Application:  $PREFIX/releases/...
+  Command:      $BIN_DIR/m365proxy
+  Node:         $([[ $SYSTEM_NODE == 1 ]] && printf 'existing Node >=24 + npm' || printf 'private Node 24 (%s)' "$NODE_VERSION")
+  System deps:  $([[ $SYSTEM_DEPS == 1 ]] && printf 'apt via sudo; packages resolved dynamically' || printf 'skipped; existing dependencies required')
+  Shell PATH:   $([[ $EDIT_PATH == 1 ]] && printf 'Bash and Zsh; managed blocks with backup' || printf 'unchanged')
+  Browser:      Playwright Chromium, private download cache
+  Account data: ~/.m365-copilot-local (existing profile/key preserved)
+
+No Microsoft sign-in or service auto-start occurs during installation.
+The distro name/version itself is NOT used as an installation blocker.
+A previous application release is replaced only after build/checks succeed.
+PLAN
+
+((DRY_RUN)) && exit 0
+
+# A browser profile/session should belong to the normal desktop user. Running the
+# entire application as root creates ownership/sandbox problems and is not needed.
+((EUID != 0)) || m365_die \
+  'Run this script as your normal desktop user, WITHOUT sudo. The script invokes sudo itself only for apt dependencies.'
+
+if ((!ASSUME_YES)); then
+  [[ -t 0 ]] || m365_die 'Non-interactive input: pass --yes or run in a terminal.'
+  read -r -p 'Continue? [y/N] ' answer
+  [[ "$answer" =~ ^[yY]([eE][sS])?$ ]] || {
+    printf 'Cancelled.\n'
+    exit 0
+  }
+fi
+
+STATE=${M365_LOCAL_STATE_DIR:-$HOME/.m365-copilot-local}
+# Do not reject by mere file existence. The shared guard below validates the
+# owner (PID + boot/start identity) and reclaims only verified stale metadata.
+
+# Refuse arbitrary existing directories, conflicting commands and symlinks.
+if [[ -e "$PREFIX" ]]; then
+  [[ -d "$PREFIX" && -O "$PREFIX" ]] \
+    || m365_die 'The prefix must be a directory owned by your user.'
+
+  if [[ -n $(find "$PREFIX" -mindepth 1 -maxdepth 1 -print -quit) ]]; then
+    [[ -f "$PREFIX/.m365proxy-install" &&
+       $(cat "$PREFIX/.m365proxy-install") == m365proxy-user-install-v1 ]] \
+      || m365_die 'Non-empty prefix does not belong to this installer; refusing to overwrite it.'
+  fi
+fi
+
+if [[ -e "$BIN_DIR/m365proxy" || -L "$BIN_DIR/m365proxy" ]]; then
+  [[ -L "$BIN_DIR/m365proxy" &&
+     $(readlink -- "$BIN_DIR/m365proxy") == "$PREFIX/bin/m365proxy" ]] \
+    || m365_die 'An unrelated m365proxy command already exists in the bin directory.'
+fi
+
+mkdir -p -- "$PREFIX" "$BIN_DIR"
+[[ -w "$BIN_DIR" ]] \
+  || m365_die 'The bin directory is not writable by your user. Choose a user-owned directory such as ~/.local/bin.'
+
+chmod 700 -- "$PREFIX"
+printf 'm365proxy-user-install-v1\n' > "$PREFIX/.m365proxy-install"
+
+# -----------------------------------------------------------------------------
+# System dependencies
+# -----------------------------------------------------------------------------
+
+if ((SYSTEM_DEPS)); then
+  command -v sudo >/dev/null \
+    || m365_die 'sudo is missing. Install the required OS dependencies as an administrator, then rerun with --no-system-deps.'
+
+  m365_note 'Installing OS prerequisites. Only this stage uses sudo.'
+  sudo -v
+  sudo apt-get update
+
+  # util-linux supplies flock on Debian-like systems.
+  base=(
+    ca-certificates
+    curl
+    git
+    tar
+    xz-utils
+    build-essential
+    python3
+    pkg-config
+    libsecret-1-dev
+    util-linux
+  )
+
+  pkg_text=$(m365_chromium_packages) \
+    || m365_die 'One or more Chromium libraries have no apt candidate. Check enabled repositories, or install compatible packages manually and rerun with --no-system-deps.'
+
+  mapfile -t browser_packages <<< "$pkg_text"
+
+  sudo apt-get install -y --no-install-recommends \
+    "${base[@]}" \
+    "${browser_packages[@]}"
+fi
+
+# Tools needed after the dependency stage.
+for tool in curl git tar xz sha256sum awk flock; do
+  command -v "$tool" >/dev/null \
+    || m365_die "Missing required tool: $tool. Install system prerequisites and retry."
+done
+
+# -----------------------------------------------------------------------------
+# Installer lock
+# -----------------------------------------------------------------------------
+
+exec 9> "$PREFIX/.install.lock"
+flock -n 9 || m365_die 'Another installer is already running for this prefix.'
+
+TEMP=''
+RELEASE=''
+ACTIVATED=0
+STATE_GUARD_PID=''
+STATE_GUARD_READ=''
+STATE_GUARD_WRITE=''
+
+cleanup() {
+  local code=$?
+  if [[ -n "$STATE_GUARD_WRITE" ]]; then
+    exec {STATE_GUARD_WRITE}>&- || true
+  fi
+  if [[ -n "$STATE_GUARD_READ" ]]; then
+    exec {STATE_GUARD_READ}<&- || true
+  fi
+  if [[ -n "$STATE_GUARD_PID" ]]; then
+    wait "$STATE_GUARD_PID" || true
+  fi
+
+  [[ -z "$TEMP" ]] || rm -rf -- "$TEMP"
+
+  if ((code != 0)); then
+    printf '\nInstallation failed; existing Microsoft account data was left untouched.\n' >&2
+    if [[ -n "$RELEASE" && "$ACTIVATED" == 0 ]]; then
+      printf 'Unactivated release retained for diagnosis: %s\n' "$RELEASE" >&2
+    fi
+  fi
+}
+
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
+
+mkdir -p -- \
+  "$PREFIX/runtime" \
+  "$PREFIX/releases" \
+  "$PREFIX/bin" \
+  "$PREFIX/browsers"
+
+TEMP=$(mktemp -d "$PREFIX/.download.XXXXXXXX")
+
+# -----------------------------------------------------------------------------
+# Node.js
+# -----------------------------------------------------------------------------
+
+if ((SYSTEM_NODE)); then
+  command -v node >/dev/null && command -v npm >/dev/null \
+    || m365_die '--use-system-node requires both node and npm on PATH.'
+
+  NODE=$(node -p 'process.execPath')
+
+  "$NODE" -e '
+    const major = Number(process.versions.node.split(".")[0]);
+    if (!Number.isFinite(major) || major < 24) process.exit(1);
+  ' || m365_die 'Existing Node is older than 24.'
+else
+  m365_note 'Downloading the official Node 24 checksum manifest over HTTPS.'
+
+  if [[ "$NODE_VERSION" == latest ]]; then
+    dist='https://nodejs.org/download/release/latest-v24.x'
+  else
+    dist="https://nodejs.org/download/release/v$NODE_VERSION"
+  fi
+
+  curl \
+    --fail \
+    --show-error \
+    --silent \
+    --location \
+    --retry 3 \
+    --connect-timeout 20 \
+    --max-time 300 \
+    --proto '=https' \
+    --proto-redir '=https' \
+    "$dist/SHASUMS256.txt" \
+    -o "$TEMP/SHASUMS256.txt"
+
+  entry=$(m365_checksum_entry "$TEMP/SHASUMS256.txt" "$ARCH" "$NODE_VERSION") \
+    || m365_die 'Node checksum manifest did not contain exactly one matching Node 24 Linux archive.'
+
+  read -r expected archive <<< "$entry"
+
+  node_version=${archive#node-v}
+  node_version=${node_version%-linux-*}
+  RUNTIME="$PREFIX/runtime/node-v$node_version-linux-$ARCH"
+
+  if [[ ! -x "$RUNTIME/bin/node" ||
+        ! -f "$RUNTIME/.archive-sha256" ||
+        $(cat "$RUNTIME/.archive-sha256" 2>/dev/null) != "$expected" ]]; then
+
+    [[ ! -e "$RUNTIME" ]] \
+      || m365_die "Existing private runtime is incomplete or has a different checksum. Move it aside and retry: $RUNTIME"
+
+    m365_note "Installing private Node v$node_version. System Node remains unchanged."
+
+    curl \
+      --fail \
+      --show-error \
+      --silent \
+      --location \
+      --retry 3 \
+      --connect-timeout 20 \
+      --max-time 1800 \
+      --proto '=https' \
+      --proto-redir '=https' \
+      "https://nodejs.org/download/release/v$node_version/$archive" \
+      -o "$TEMP/$archive"
+
+    (
+      cd "$TEMP"
+      printf '%s  %s\n' "$expected" "$archive" | sha256sum --check --status -
+    ) || m365_die 'Node archive checksum verification failed.'
+
+    mkdir "$TEMP/runtime"
+
+    tar \
+      --extract \
+      --xz \
+      --file "$TEMP/$archive" \
+      --directory "$TEMP/runtime" \
+      --strip-components=1 \
+      --no-same-owner
+
+    printf '%s\n' "$expected" > "$TEMP/runtime/.archive-sha256"
+
+    "$TEMP/runtime/bin/node" -e '
+      if (Number(process.versions.node.split(".")[0]) !== 24) process.exit(1);
+    ' || m365_die 'Downloaded Node 24 cannot run on this system.'
+
+    mv -- "$TEMP/runtime" "$RUNTIME"
+  fi
+
+  NODE="$RUNTIME/bin/node"
+fi
+
+export PATH="$(dirname -- "$NODE"):$PATH"
+export PLAYWRIGHT_BROWSERS_PATH="$PREFIX/browsers"
+export PLAYWRIGHT_SKIP_BROWSER_GC=1
+
+# Hold the state guard across build and activation. EOF on this private pipe
+# also releases it if the installer is interrupted or killed.
+m365_note 'Checking the process/profile owner and acquiring the shared state lock.'
+coproc M365_STATE_GUARD { exec "$NODE" "$SOURCE/scripts/state-lock.mjs" "$STATE"; }
+STATE_GUARD_PID=$M365_STATE_GUARD_PID
+STATE_GUARD_READ=${M365_STATE_GUARD[0]}
+STATE_GUARD_WRITE=${M365_STATE_GUARD[1]}
+if ! IFS= read -r -t 15 -u "$STATE_GUARD_READ" state_guard_reply || [[ "$state_guard_reply" != READY ]]; then
+  m365_die 'Cannot acquire the state directory. Close an active proxy/dedicated browser; verified stale PID locks are recovered automatically.'
+fi
+
+# -----------------------------------------------------------------------------
+# Prepare a new release without touching active account/session state
+# -----------------------------------------------------------------------------
+
+RELEASE=$(mktemp -d "$PREFIX/releases/release-$(date -u +%Y%m%dT%H%M%SZ)-XXXXXXXX")
+
+items=(
+  src
+  scripts
+  tests
+  examples
+  docs
+  package.json
+  UPSTREAM.json
+  README.md
+  LICENSE
+  THIRD_PARTY_NOTICES.md
+  TEST_REPORT.md
+  .gitignore
+  install.sh
 )
 
-Set-StrictMode -Version 2.0
-$ErrorActionPreference = 'Stop'
-$ProgressPreference = 'SilentlyContinue'
-try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
+if [[ $(
+  "$NODE" -p \
+    'JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")).bundledInThisZip === true' \
+    "$SOURCE/UPSTREAM.json"
+) == true ]]; then
+  items+=(vendor/cramt UPSTREAM_FILES_SHA256.json)
+fi
 
-function Fail([string] $Message) { throw $Message }
-if ($env:OS -ne 'Windows_NT') {
-    Fail 'install.ps1 is for native Windows. On Linux/macOS use install-online.sh.'
-}
-function Note([string] $Message) { Write-Host "`n[m365proxy] $Message" }
-function Invoke-Checked([string] $File, [object[]] $Arguments) {
-    & $File @Arguments
-    if ($LASTEXITCODE -ne 0) { throw "$File exited with code $LASTEXITCODE." }
-}
-function Refresh-Path {
-    $machine = [Environment]::GetEnvironmentVariable('Path', 'Machine')
-    $user = [Environment]::GetEnvironmentVariable('Path', 'User')
-    $env:Path = (($machine, $user) -join ';').Trim(';')
-}
-function Ensure-Git {
-    $git = Get-Command git.exe -ErrorAction SilentlyContinue
-    if ($git) { return $git.Source }
-    $winget = Get-Command winget.exe -ErrorAction SilentlyContinue
-    if (-not $winget) { Fail 'Git is required and winget is not available. Install Git for Windows, then rerun.' }
-    Note 'Git is missing; installing Git for Windows with winget.'
-    & $winget.Source install --id Git.Git -e --source winget --accept-package-agreements --accept-source-agreements
-    if ($LASTEXITCODE -ne 0) { Fail "winget could not install Git (exit $LASTEXITCODE)." }
-    Refresh-Path
-    $git = Get-Command git.exe -ErrorAction SilentlyContinue
-    if (-not $git) {
-        $candidate = Join-Path $env:ProgramFiles 'Git\cmd\git.exe'
-        if (Test-Path -LiteralPath $candidate -PathType Leaf) { return $candidate }
-        Fail 'Git was installed but is not visible in this shell. Open a new PowerShell window and rerun.'
-    }
-    return $git.Source
-}
-function Add-UserPath([string] $Directory) {
-    $current = [Environment]::GetEnvironmentVariable('Path', 'User')
-    if ($null -eq $current) { $current = '' }
-    $parts = @($current -split ';' | Where-Object { $_ -and $_.Trim() })
-    $needle = $Directory.TrimEnd('\')
-    $exists = $false
-    foreach ($part in $parts) {
-        if ($part.Trim().TrimEnd('\').Equals($needle, [StringComparison]::OrdinalIgnoreCase)) { $exists = $true; break }
-    }
-    if (-not $exists) {
-        $updated = if ($current.Trim()) { $current.TrimEnd(';') + ';' + $Directory } else { $Directory }
-        [Environment]::SetEnvironmentVariable('Path', $updated, 'User')
-    }
-    if (-not (($env:Path -split ';') | Where-Object { $_.TrimEnd('\').Equals($needle, [StringComparison]::OrdinalIgnoreCase) })) {
-        $env:Path = "$Directory;$env:Path"
-    }
-}
-function Get-NodeMajorVersion([string] $NodePath) {
-    $versionText = (& $NodePath --version).Trim()
-    if ($LASTEXITCODE -ne 0) {
-        Fail "Node failed while checking its version: $NodePath"
-    }
-    if ($versionText -notmatch '^v(?<major>[0-9]+)\.') {
-        Fail "Could not parse Node version: $versionText"
-    }
-    return [int] $Matches['major']
-}
+# Explicit source allowlist and secret/state exclusions.
+tar \
+  --directory "$SOURCE" \
+  --exclude=node_modules \
+  --exclude=.git \
+  --exclude=browser-profile \
+  --exclude=api-key \
+  --exclude=guided.json \
+  --exclude='.guided-*.tmp' \
+  --exclude=process.lock \
+  --exclude=process.guard \
+  --exclude=.env \
+  --exclude='*.log' \
+  --exclude='*.zip' \
+  --exclude=secrets.json \
+  --exclude=msal-cache.json \
+  -cf - \
+  "${items[@]}" \
+  | tar --directory "$RELEASE" --no-same-owner -xf -
 
-# When invoked as: irm .../install.ps1 | iex, first obtain a clean repo snapshot
-# and reinvoke the checked-in installer from disk.
-$localPackage = $null
-if ($PSScriptRoot) { $localPackage = Join-Path $PSScriptRoot 'package.json' }
-$hasRepo = $PSScriptRoot -and (Test-Path -LiteralPath $localPackage -PathType Leaf) -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot 'UPSTREAM.json') -PathType Leaf)
-if (-not $FromRepo -and -not $hasRepo) {
-    $git = Ensure-Git
-    $tmp = Join-Path ([IO.Path]::GetTempPath()) ('m365proxy-online-' + [Guid]::NewGuid().ToString('N'))
-    try {
-        New-Item -ItemType Directory -Path $tmp | Out-Null
-        $repo = Join-Path $tmp 'm365proxy'
-        Note 'Downloading sPROFFEs/m365proxy from GitHub.'
-        Invoke-Checked $git @('clone', '--depth', '1', '--branch', 'main', 'https://github.com/sPROFFEs/m365proxy.git', $repo)
-        $script = Join-Path $repo 'install.ps1'
-        $powershell = (Get-Command powershell.exe -ErrorAction Stop).Source
-        & $powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File $script -FromRepo -Yes
-        $code = $LASTEXITCODE
-        if ($code -ne 0) { throw "m365proxy installer exited with code $code." }
-    } finally {
-        if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }
-    }
-    return
-}
-$SourceRoot = $PSScriptRoot
-if (-not $SourceRoot -or -not (Test-Path -LiteralPath (Join-Path $SourceRoot 'UPSTREAM.json') -PathType Leaf)) {
-    Fail 'Run install.ps1 from the m365proxy repository, or use the documented one-line installer.'
-}
-if (-not $Prefix) { $Prefix = Join-Path $env:LOCALAPPDATA 'm365proxy' }
-if (-not $BinDir) { $BinDir = Join-Path $Prefix 'bin' }
-$Prefix = [IO.Path]::GetFullPath($Prefix)
-$BinDir = [IO.Path]::GetFullPath($BinDir)
-$SourceRoot = [IO.Path]::GetFullPath($SourceRoot)
-if ($Prefix.Contains("`n") -or $Prefix.Contains("`r") -or $Prefix.Contains('"')) { Fail 'The installation prefix contains unsupported characters.' }
-if ($BinDir.Contains("`n") -or $BinDir.Contains("`r") -or $BinDir.Contains('"')) { Fail 'The bin directory contains unsupported characters.' }
-if ($Prefix.TrimEnd('\').Equals($SourceRoot.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) { Fail 'Use a dedicated installation prefix outside the source checkout.' }
-if ($UseSystemNode -and $NodeVersion -ne 'latest') { Fail '-UseSystemNode cannot be combined with -NodeVersion.' }
-if ($NodeVersion -ne 'latest' -and $NodeVersion -notmatch '^24\.[0-9]+\.[0-9]+$') { Fail '-NodeVersion must be latest or a stable 24.x.y release.' }
-$archName = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
-switch -Regex ($archName) {
-    '^(AMD64|x86_64)$' { $Arch = 'x64'; break }
-    '^(ARM64|aarch64)$' { $Arch = 'arm64'; break }
-    default { Fail "Unsupported Windows architecture: $archName. Requires x64 or arm64." }
-}
-Write-Host @"
-Installation plan
-  Platform:      Windows $Arch
-  Application:   $Prefix\releases\...
-  Command:       $BinDir\m365proxy.cmd
-  Node:          $(if ($UseSystemNode) { 'existing Node >=24 + npm' } else { "private Node 24 ($NodeVersion)" })
-  User PATH:     $(if ($NoPath) { 'unchanged' } else { $BinDir })
-  Browser:       Playwright Chromium, private download cache
-  Account data:  $env:USERPROFILE\.m365-copilot-local (existing profile/key preserved)
-No Microsoft sign-in or service auto-start occurs during installation.
-"@
-if ($DryRun) { return }
-if (-not $Yes) {
-    $answer = Read-Host 'Continue? [y/N]'
-    if ($answer -notmatch '^[yY]([eE][sS])?$') { Write-Host 'Cancelled.'; return }
-}
-$git = Ensure-Git
-$installedBin = Join-Path $Prefix 'bin'
-if (-not $BinDir.TrimEnd('\').Equals($installedBin.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) {
-    $externalLauncher = Join-Path $BinDir 'm365proxy.cmd'
-    if (Test-Path -LiteralPath $externalLauncher -PathType Leaf) {
-        $existingShim = Get-Content -LiteralPath $externalLauncher -Raw -ErrorAction SilentlyContinue
-        if ($existingShim -notmatch 'm365proxy-managed-shim-v1') {
-            Fail 'An unrelated m365proxy.cmd already exists in the requested bin directory.'
-        }
-    }
-}
-$marker = Join-Path $Prefix '.m365proxy-install'
-if (Test-Path -LiteralPath $Prefix) {
-    $entries = @(Get-ChildItem -LiteralPath $Prefix -Force -ErrorAction SilentlyContinue)
-    if ($entries.Count -gt 0) {
-        if (-not (Test-Path -LiteralPath $marker -PathType Leaf) -or (Get-Content -LiteralPath $marker -Raw).Trim() -ne 'm365proxy-user-install-v1') {
-            Fail 'Non-empty prefix does not belong to this installer; refusing to overwrite it.'
-        }
-    }
-}
-New-Item -ItemType Directory -Force -Path $Prefix, (Join-Path $Prefix 'runtime'), (Join-Path $Prefix 'releases'), (Join-Path $Prefix 'bin'), (Join-Path $Prefix 'browsers') | Out-Null
-[IO.File]::WriteAllText($marker, "m365proxy-user-install-v1`n", (New-Object Text.UTF8Encoding($false)))
-$temp = Join-Path $Prefix ('.download-' + [Guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $temp | Out-Null
-$guard = $null
-$release = $null
-try {
-    if ($UseSystemNode) {
-        $nodeCmd = Get-Command node.exe -ErrorAction SilentlyContinue
-        $npmCmd = Get-Command npm.cmd -ErrorAction SilentlyContinue
-        if (-not $nodeCmd -or -not $npmCmd) { Fail '-UseSystemNode requires node and npm on PATH.' }
-        $Node = $nodeCmd.Source
-        $major = Get-NodeMajorVersion $Node
-        if ($major -lt 24) { Fail 'Existing Node is older than 24.' }
-    } else {
-        Note 'Downloading the official Node 24 checksum manifest over HTTPS.'
-        $dist = if ($NodeVersion -eq 'latest') { 'https://nodejs.org/download/release/latest-v24.x' } else { "https://nodejs.org/download/release/v$NodeVersion" }
-        $manifest = Join-Path $temp 'SHASUMS256.txt'
-        Invoke-WebRequest -UseBasicParsing -Uri "$dist/SHASUMS256.txt" -OutFile $manifest
-        $pattern = '^([0-9a-fA-F]{64})\s+\*?(node-v24\.[0-9]+\.[0-9]+-win-' + [Regex]::Escape($Arch) + '\.zip)$'
-        $hits = @()
-        foreach ($line in Get-Content -LiteralPath $manifest) {
-            if ($line -match $pattern) {
-                $version = ($Matches[2] -replace '^node-v','') -replace '-win-.*$',''
-                if ($NodeVersion -eq 'latest' -or $NodeVersion -eq $version) {
-                    $hits += [PSCustomObject]@{ Hash = $Matches[1].ToLowerInvariant(); Archive = $Matches[2]; Version = $version }
-                }
-            }
-        }
-        if ($hits.Count -ne 1) { Fail 'Node checksum manifest did not contain exactly one matching Windows Node 24 archive.' }
-        $hit = $hits[0]
-        $Runtime = Join-Path (Join-Path $Prefix 'runtime') ("node-v{0}-win-{1}" -f $hit.Version, $Arch)
-        $hashFile = Join-Path $Runtime '.archive-sha256'
-        $validRuntime = (Test-Path -LiteralPath (Join-Path $Runtime 'node.exe') -PathType Leaf) -and (Test-Path -LiteralPath $hashFile -PathType Leaf)
-        if ($validRuntime) { $validRuntime = ((Get-Content -LiteralPath $hashFile -Raw).Trim().ToLowerInvariant() -eq $hit.Hash) }
-        if (-not $validRuntime) {
-            if (Test-Path -LiteralPath $Runtime) { Fail "Existing private runtime is incomplete or has a different checksum: $Runtime" }
-            Note "Installing private Node v$($hit.Version). System Node remains unchanged."
-            $archivePath = Join-Path $temp $hit.Archive
-            Invoke-WebRequest -UseBasicParsing -Uri "https://nodejs.org/download/release/v$($hit.Version)/$($hit.Archive)" -OutFile $archivePath
-            $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
-            if ($actual -ne $hit.Hash) { Fail 'Node archive checksum verification failed.' }
-            $expanded = Join-Path $temp 'node-expanded'
-            Expand-Archive -LiteralPath $archivePath -DestinationPath $expanded
-            $root = Get-ChildItem -LiteralPath $expanded -Directory | Select-Object -First 1
-            if (-not $root) { Fail 'Downloaded Node archive did not contain a runtime directory.' }
-            Move-Item -LiteralPath $root.FullName -Destination $Runtime
-            [IO.File]::WriteAllText((Join-Path $Runtime '.archive-sha256'), $hit.Hash + "`n", (New-Object Text.UTF8Encoding($false)))
-        }
-        $Node = Join-Path $Runtime 'node.exe'
-        $major = Get-NodeMajorVersion $Node
-        if ($major -ne 24) { Fail 'Downloaded Node 24 cannot run on this Windows host.' }
-    }
-    $env:Path = "$(Split-Path -Parent $Node);$env:Path"
-    $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $Prefix 'browsers'
-    $env:PLAYWRIGHT_SKIP_BROWSER_GC = '1'
-    # Hold the same application state lock while building and activating.
-    $state = if ($env:M365_LOCAL_STATE_DIR) { [IO.Path]::GetFullPath($env:M365_LOCAL_STATE_DIR) } else { Join-Path $env:USERPROFILE '.m365-copilot-local' }
-    $stateLock = Join-Path $SourceRoot 'scripts\state-lock.mjs'
-    $psi = New-Object Diagnostics.ProcessStartInfo
-    $psi.FileName = $Node
-    $psi.Arguments = '"' + $stateLock + '" "' + $state + '"'
-    $psi.UseShellExecute = $false
-    $psi.RedirectStandardInput = $true
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError = $true
-    $psi.CreateNoWindow = $true
-    $guard = New-Object Diagnostics.Process
-    $guard.StartInfo = $psi
-    if (-not $guard.Start()) { Fail 'Could not start the state-lock helper.' }
-    $readyTask = $guard.StandardOutput.ReadLineAsync()
-    if (-not $readyTask.Wait(20000)) {
-        try { $guard.Kill() } catch {}
-        try { $guard.WaitForExit(2000) | Out-Null } catch {}
-        $detail = $guard.StandardError.ReadToEnd().Trim()
-        if (-not $detail) { $detail = 'The state-lock helper did not become ready within 20 seconds.' }
-        Fail "Cannot acquire the state directory. $detail"
-    }
-    $ready = $readyTask.Result
-    if ($ready -ne 'READY') {
-        $detail = $guard.StandardError.ReadToEnd().Trim()
-        if (-not $detail) { $detail = 'The state-lock helper did not return READY.' }
-        Fail "Cannot acquire the state directory. $detail"
-    }
-    $stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
-    $release = Join-Path (Join-Path $Prefix 'releases') ("release-$stamp-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
-    New-Item -ItemType Directory -Path $release | Out-Null
-    foreach ($name in @('src','scripts','tests','examples','docs')) {
-        $src = Join-Path $SourceRoot $name
-        if (Test-Path -LiteralPath $src) { Copy-Item -LiteralPath $src -Destination $release -Recurse }
-    }
-    foreach ($name in @('package.json','UPSTREAM.json','README.md','LICENSE','THIRD_PARTY_NOTICES.md','TEST_REPORT.md','.gitignore','install.sh','install-macos.sh','install-online.sh','install.ps1')) {
-        $src = Join-Path $SourceRoot $name
-        if (Test-Path -LiteralPath $src -PathType Leaf) { Copy-Item -LiteralPath $src -Destination $release }
-    }
-    $upstream = Get-Content -LiteralPath (Join-Path $SourceRoot 'UPSTREAM.json') -Raw | ConvertFrom-Json
-    if ($upstream.bundledInThisZip -eq $true) {
-        New-Item -ItemType Directory -Force -Path (Join-Path $release 'vendor') | Out-Null
-        Copy-Item -LiteralPath (Join-Path $SourceRoot 'vendor\cramt') -Destination (Join-Path $release 'vendor') -Recurse
-        Copy-Item -LiteralPath (Join-Path $SourceRoot 'UPSTREAM_FILES_SHA256.json') -Destination $release
-    }
-    [IO.File]::WriteAllText((Join-Path $release '.node-path'), $Node + "`n", (New-Object Text.UTF8Encoding($false)))
-    Note 'Fetching/verifying pinned upstream source, installing dependencies and building.'
-    Invoke-Checked $Node @((Join-Path $release 'scripts\bootstrap.mjs'), '--skip-browser')
-    Note 'Installing the Chromium revision required by the pinned Playwright dependency.'
-    Invoke-Checked $Node @((Join-Path $release 'scripts\browser-setup.mjs'), 'install')
-    if (-not $SkipBrowserCheck) {
-        Note 'Smoke-testing Chromium locally with about:blank. No Microsoft login is performed.'
-        Invoke-Checked $Node @((Join-Path $release 'scripts\browser-setup.mjs'), 'check')
-    }
-    Invoke-Checked $Node @((Join-Path $release 'src\cli.mjs'), 'doctor')
-    $installedBin = Join-Path $Prefix 'bin'
-    Copy-Item -LiteralPath (Join-Path $release 'scripts\windows\launcher.mjs') -Destination (Join-Path $installedBin 'm365proxy-launcher.mjs') -Force
-    Copy-Item -LiteralPath (Join-Path $release 'scripts\windows\launcher.cmd') -Destination (Join-Path $installedBin 'm365proxy.cmd') -Force
-    $currentTmp = Join-Path $Prefix ('.current-' + [Guid]::NewGuid().ToString('N') + '.tmp')
-    [IO.File]::WriteAllText($currentTmp, $release + "`n", (New-Object Text.UTF8Encoding($false)))
-    Move-Item -LiteralPath $currentTmp -Destination (Join-Path $Prefix 'current.txt') -Force
-    if (-not $BinDir.TrimEnd('\').Equals($installedBin.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) {
-        New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
-        $target = Join-Path $installedBin 'm365proxy.cmd'
-        $shim = "@echo off`r`nrem m365proxy-managed-shim-v1`r`ncall `"$target`" %*`r`nexit /b %ERRORLEVEL%`r`n"
-        [IO.File]::WriteAllText((Join-Path $BinDir 'm365proxy.cmd'), $shim, [Text.Encoding]::ASCII)
-    }
-    if (-not $NoPath) { Add-UserPath $BinDir }
-} finally {
-    if ($guard) {
-        try { $guard.StandardInput.Close() } catch {}
-        try { if (-not $guard.HasExited) { $guard.WaitForExit(5000) | Out-Null } } catch {}
-        try { $guard.Dispose() } catch {}
-    }
-    if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue }
-}
-$launcher = Join-Path $BinDir 'm365proxy.cmd'
-if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) { Fail 'Installation completed but the launcher was not created.' }
-& $launcher --help
-if ($LASTEXITCODE -ne 0) { Fail "Installed launcher failed its help smoke test with code $LASTEXITCODE." }
-Write-Host "`nInstallation completed. Open a new terminal if PATH was updated, then run:"
-Write-Host '  m365proxy menu'
-Write-Host 'No Microsoft session has been tested by this installer.'
+printf '%s\n' "$NODE" > "$RELEASE/.node-path"
+
+# -----------------------------------------------------------------------------
+# Build proxy + install/check Playwright Chromium
+# -----------------------------------------------------------------------------
+
+m365_note 'Fetching pinned cramt source, installing its lockfile and building as your user.'
+"$NODE" "$RELEASE/scripts/bootstrap.mjs" --skip-browser
+
+m365_note 'Installing the Chromium revision required by the pinned Playwright dependency.'
+"$NODE" "$RELEASE/scripts/browser-setup.mjs" install
+
+if ((CHECK_BROWSER)); then
+  m365_note 'Smoke-testing Chromium locally with about:blank. No Microsoft login is performed.'
+  "$NODE" "$RELEASE/scripts/browser-setup.mjs" check
+else
+  m365_warn 'Browser smoke test skipped. Browser startup has NOT been verified.'
+fi
+
+"$NODE" "$RELEASE/src/cli.mjs" doctor
+
+# The shared state guard remains held until cleanup, including activation.
+kill -0 "$STATE_GUARD_PID" 2>/dev/null \
+  || m365_die 'The state-lock helper exited unexpectedly. Refusing to activate this release.' 
+
+# -----------------------------------------------------------------------------
+# PATH + activation
+# -----------------------------------------------------------------------------
+
+if ((EDIT_PATH)); then
+  "$NODE" "$RELEASE/scripts/linux-path.mjs" add "$BIN_DIR"
+fi
+
+# Atomic launcher/current updates on the same filesystem.
+install -m 700 -- \
+  "$RELEASE/scripts/linux/launcher.sh" \
+  "$PREFIX/bin/.m365proxy.new"
+
+mv -f -- \
+  "$PREFIX/bin/.m365proxy.new" \
+  "$PREFIX/bin/m365proxy"
+
+ln -s -- "$RELEASE" "$PREFIX/.current-new-$$"
+mv -Tf -- "$PREFIX/.current-new-$$" "$PREFIX/current"
+ACTIVATED=1
+
+if [[ ! -L "$BIN_DIR/m365proxy" ]]; then
+  ln -s -- "$PREFIX/bin/m365proxy" "$BIN_DIR/m365proxy"
+fi
+
+if [[ ! -e "$BIN_DIR/m365prox" && ! -L "$BIN_DIR/m365prox" ]]; then
+  ln -s -- "$PREFIX/bin/m365proxy" "$BIN_DIR/m365prox"
+elif [[ ! -L "$BIN_DIR/m365prox" || $(readlink -- "$BIN_DIR/m365prox") != "$PREFIX/bin/m365proxy" ]]; then
+  m365_warn 'Existing unrelated m365prox command left unchanged. Use m365proxy menu.'
+fi
+
+"$BIN_DIR/m365proxy" --help
+
+printf '\nInstallation completed for user %s.\n' "$(id -un)"
+printf 'Distribution gating was capability-based, not name/version-based.\n'
+printf '\nActivate the command in THIS terminal, or open a new terminal:\n\n'
+printf '  export PATH=%q:"$PATH"\n' "$BIN_DIR"
+printf '\nThen run:\n'
+printf '  m365proxy menu   # or: m365proxy guided\n'
+printf '  m365proxy key   # from another terminal\n\n'
+printf 'Endpoint: http://127.0.0.1:8787/v1\n'
+printf 'No Microsoft session has been tested by this installer.\n'
+
+if [[ -z ${DISPLAY:-} && -z ${WAYLAND_DISPLAY:-} ]]; then
+  m365_warn 'No graphical desktop display detected. First Microsoft login/MFA requires a graphical session.'
+fi

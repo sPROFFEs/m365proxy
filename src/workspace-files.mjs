@@ -1,14 +1,19 @@
-// Read-only Linux filesystem access. Directory FDs, O_NOFOLLOW and /proc/self/fd
-// keep path resolution anchored to the approved tree, including during renames.
+// Read-only snapshot access remains Linux-only. Directory FDs, O_NOFOLLOW and
+// /proc/self/fd keep path resolution anchored to the approved tree, including
+// during renames. Windows FULL WORKSPACE uses this object only as a canonical
+// root descriptor for the local execution bridge; read()/names() stay disabled.
 // Not a sandbox against a malicious process running as the same OS user.
 import { open, realpath, lstat, opendir } from 'node:fs/promises';
 import { constants } from 'node:fs';
-import { resolve, basename, extname } from 'node:path';
+import { resolve, basename, extname, relative, parse, isAbsolute, sep } from 'node:path';
 import { homedir } from 'node:os';
 import { ProxyError } from './errors.mjs';
 import { sha256 } from './util.mjs';
-
 const err = (code, message, status = 409) => new ProxyError(status, code, message);
+function sameOrInside(path, parent) {
+  const rel = relative(parent, path);
+  return rel === '' || (rel !== '..' && !rel.startsWith('..' + sep) && !isAbsolute(rel));
+}
 export function validRelative(path) {
   return typeof path === 'string' && path.length > 0 && path.length <= 512 &&
     !/[\\\x00-\x1f\x7f:]/.test(path) && !path.startsWith('/') &&
@@ -41,28 +46,34 @@ export function textBytes(bytes) {
   try { text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes); } catch { return null; }
   return /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/.test(text) ? null : text;
 }
-
 export class SafeTree {
-  static async create(root, { stateDir } = {}) {
-    if (process.platform !== 'linux') throw err('workspace_platform', 'Workspace context currently requires Linux and /proc/self/fd.', 400);
+  static async create(root, { stateDir, execOnly = false } = {}) {
+    const windowsExecOnly = process.platform === 'win32' && execOnly;
+    if (process.platform !== 'linux' && !windowsExecOnly)
+      throw err('workspace_platform', 'Read-only workspace context currently requires Linux and /proc/self/fd. Windows is supported for FULL WORKSPACE execution mode.', 400);
     const canonical = await realpath(resolve(root));
-    if ([resolve(homedir()), '/', '/proc', '/sys', '/dev', '/etc'].includes(canonical) || /^\/(?:proc|sys|dev)(?:\/|$)/.test(canonical))
+    const filesystemRoot = parse(canonical).root;
+    const linuxSystemTree = process.platform === 'linux' &&
+      (['/proc', '/sys', '/dev', '/etc'].includes(canonical) || /^\/(?:proc|sys|dev)(?:\/|$)/.test(canonical));
+    if (canonical === resolve(homedir()) || canonical === filesystemRoot || linuxSystemTree)
       throw err('workspace_root_denied', 'Select a project folder, not your home, filesystem root or a system tree.', 400);
     const stat = await lstat(canonical);
     if (!stat.isDirectory()) throw err('workspace_not_directory', 'Workspace root must be a directory.', 400);
     const excludedRoot = stateDir ? await realpath(resolve(stateDir)).catch(() => resolve(stateDir)) : null;
-    if (excludedRoot && (canonical === excludedRoot || canonical.startsWith(excludedRoot + '/')))
+    if (excludedRoot && sameOrInside(canonical, excludedRoot))
       throw err('workspace_root_denied', 'The proxy state/profile cannot be used as a workspace.', 400);
-    return new SafeTree(canonical, stat, excludedRoot);
+    return new SafeTree(canonical, stat, excludedRoot, { execOnly: windowsExecOnly });
   }
-  constructor(root, stat, excludedRoot) {
-    this.root = root; this.dev = stat.dev; this.ino = stat.ino; this.excludedRoot = excludedRoot;
+  constructor(root, stat, excludedRoot, { execOnly = false } = {}) {
+    this.root = root; this.dev = stat.dev; this.ino = stat.ino; this.excludedRoot = excludedRoot; this.execOnly = execOnly;
   }
   allowed(path) {
-    return !protectedPath(path) && !(this.excludedRoot &&
-      (this.root + '/' + path === this.excludedRoot || (this.root + '/' + path).startsWith(this.excludedRoot + '/')));
+    const absolute = resolve(this.root, ...String(path).split('/'));
+    return !protectedPath(path) && !(this.excludedRoot && sameOrInside(absolute, this.excludedRoot));
   }
   async withRoot(action) {
+    if (this.execOnly || process.platform !== 'linux')
+      throw err('workspace_context_unavailable', 'Read-only workspace snapshots require Linux. FULL WORKSPACE on Windows accesses files through the local execution bridge.', 400);
     const handle = await open(this.root, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
     try {
       const stat = await handle.stat();
@@ -123,7 +134,6 @@ export class SafeTree {
     });
   }
 }
-
 // Gitignore-style rules: anchored/slash patterns, *, **, ?, [] classes, escaped
 // characters, negation and nested files. Ignored parents are never traversed.
 // Unsupported/malformed syntax fails closed instead of silently including files.
@@ -174,7 +184,6 @@ function globRegex(pattern) {
     return match(0, 0);
   } };
 }
-
 export function parseIgnore(text, base = '') {
   const rules = [];
   for (let line of text.split(/\r?\n/)) {

@@ -16,7 +16,6 @@ $ProgressPreference = 'SilentlyContinue'
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 } catch {}
 
 function Fail([string] $Message) { throw $Message }
-
 if ($env:OS -ne 'Windows_NT') {
     Fail 'install.ps1 is for native Windows. On Linux/macOS use install-online.sh.'
 }
@@ -64,6 +63,16 @@ function Add-UserPath([string] $Directory) {
         $env:Path = "$Directory;$env:Path"
     }
 }
+function Get-NodeMajorVersion([string] $NodePath) {
+    $versionText = (& $NodePath --version).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        Fail "Node failed while checking its version: $NodePath"
+    }
+    if ($versionText -notmatch '^v(?<major>[0-9]+)\.') {
+        Fail "Could not parse Node version: $versionText"
+    }
+    return [int] $Matches['major']
+}
 
 # When invoked as: irm .../install.ps1 | iex, first obtain a clean repo snapshot
 # and reinvoke the checked-in installer from disk.
@@ -88,7 +97,6 @@ if (-not $FromRepo -and -not $hasRepo) {
     }
     return
 }
-
 $SourceRoot = $PSScriptRoot
 if (-not $SourceRoot -or -not (Test-Path -LiteralPath (Join-Path $SourceRoot 'UPSTREAM.json') -PathType Leaf)) {
     Fail 'Run install.ps1 from the m365proxy repository, or use the documented one-line installer.'
@@ -103,14 +111,12 @@ if ($BinDir.Contains("`n") -or $BinDir.Contains("`r") -or $BinDir.Contains('"'))
 if ($Prefix.TrimEnd('\').Equals($SourceRoot.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) { Fail 'Use a dedicated installation prefix outside the source checkout.' }
 if ($UseSystemNode -and $NodeVersion -ne 'latest') { Fail '-UseSystemNode cannot be combined with -NodeVersion.' }
 if ($NodeVersion -ne 'latest' -and $NodeVersion -notmatch '^24\.[0-9]+\.[0-9]+$') { Fail '-NodeVersion must be latest or a stable 24.x.y release.' }
-
 $archName = if ($env:PROCESSOR_ARCHITEW6432) { $env:PROCESSOR_ARCHITEW6432 } else { $env:PROCESSOR_ARCHITECTURE }
 switch -Regex ($archName) {
     '^(AMD64|x86_64)$' { $Arch = 'x64'; break }
     '^(ARM64|aarch64)$' { $Arch = 'arm64'; break }
     default { Fail "Unsupported Windows architecture: $archName. Requires x64 or arm64." }
 }
-
 Write-Host @"
 Installation plan
   Platform:      Windows $Arch
@@ -123,12 +129,10 @@ Installation plan
 No Microsoft sign-in or service auto-start occurs during installation.
 "@
 if ($DryRun) { return }
-
 if (-not $Yes) {
     $answer = Read-Host 'Continue? [y/N]'
     if ($answer -notmatch '^[yY]([eE][sS])?$') { Write-Host 'Cancelled.'; return }
 }
-
 $git = Ensure-Git
 $installedBin = Join-Path $Prefix 'bin'
 if (-not $BinDir.TrimEnd('\').Equals($installedBin.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) {
@@ -140,7 +144,6 @@ if (-not $BinDir.TrimEnd('\').Equals($installedBin.TrimEnd('\'), [StringComparis
         }
     }
 }
-
 $marker = Join-Path $Prefix '.m365proxy-install'
 if (Test-Path -LiteralPath $Prefix) {
     $entries = @(Get-ChildItem -LiteralPath $Prefix -Force -ErrorAction SilentlyContinue)
@@ -152,7 +155,6 @@ if (Test-Path -LiteralPath $Prefix) {
 }
 New-Item -ItemType Directory -Force -Path $Prefix, (Join-Path $Prefix 'runtime'), (Join-Path $Prefix 'releases'), (Join-Path $Prefix 'bin'), (Join-Path $Prefix 'browsers') | Out-Null
 [IO.File]::WriteAllText($marker, "m365proxy-user-install-v1`n", (New-Object Text.UTF8Encoding($false)))
-
 $temp = Join-Path $Prefix ('.download-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temp | Out-Null
 $guard = $null
@@ -162,8 +164,8 @@ try {
         $nodeCmd = Get-Command node.exe -ErrorAction SilentlyContinue
         $npmCmd = Get-Command npm.cmd -ErrorAction SilentlyContinue
         if (-not $nodeCmd -or -not $npmCmd) { Fail '-UseSystemNode requires node and npm on PATH.' }
-        $Node = (& $nodeCmd.Source -p 'process.execPath').Trim()
-        $major = [int]((& $Node -p 'process.versions.node.split(".")[0]').Trim())
+        $Node = $nodeCmd.Source
+        $major = Get-NodeMajorVersion $Node
         if ($major -lt 24) { Fail 'Existing Node is older than 24.' }
     } else {
         Note 'Downloading the official Node 24 checksum manifest over HTTPS.'
@@ -201,14 +203,12 @@ try {
             [IO.File]::WriteAllText((Join-Path $Runtime '.archive-sha256'), $hit.Hash + "`n", (New-Object Text.UTF8Encoding($false)))
         }
         $Node = Join-Path $Runtime 'node.exe'
-        $major = [int]((& $Node -p 'process.versions.node.split(".")[0]').Trim())
+        $major = Get-NodeMajorVersion $Node
         if ($major -ne 24) { Fail 'Downloaded Node 24 cannot run on this Windows host.' }
     }
-
     $env:Path = "$(Split-Path -Parent $Node);$env:Path"
     $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $Prefix 'browsers'
     $env:PLAYWRIGHT_SKIP_BROWSER_GC = '1'
-
     # Hold the same application state lock while building and activating.
     $state = if ($env:M365_LOCAL_STATE_DIR) { [IO.Path]::GetFullPath($env:M365_LOCAL_STATE_DIR) } else { Join-Path $env:USERPROFILE '.m365-copilot-local' }
     $stateLock = Join-Path $SourceRoot 'scripts\state-lock.mjs'
@@ -237,7 +237,6 @@ try {
         if (-not $detail) { $detail = 'The state-lock helper did not return READY.' }
         Fail "Cannot acquire the state directory. $detail"
     }
-
     $stamp = [DateTime]::UtcNow.ToString('yyyyMMddTHHmmssZ')
     $release = Join-Path (Join-Path $Prefix 'releases') ("release-$stamp-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
     New-Item -ItemType Directory -Path $release | Out-Null
@@ -249,14 +248,13 @@ try {
         $src = Join-Path $SourceRoot $name
         if (Test-Path -LiteralPath $src -PathType Leaf) { Copy-Item -LiteralPath $src -Destination $release }
     }
-    $bundled = (& $Node -p 'JSON.parse(require("fs").readFileSync(process.argv[1],"utf8")).bundledInThisZip === true' (Join-Path $SourceRoot 'UPSTREAM.json')).Trim()
-    if ($bundled -eq 'true') {
+    $upstream = Get-Content -LiteralPath (Join-Path $SourceRoot 'UPSTREAM.json') -Raw | ConvertFrom-Json
+    if ($upstream.bundledInThisZip -eq $true) {
         New-Item -ItemType Directory -Force -Path (Join-Path $release 'vendor') | Out-Null
         Copy-Item -LiteralPath (Join-Path $SourceRoot 'vendor\cramt') -Destination (Join-Path $release 'vendor') -Recurse
         Copy-Item -LiteralPath (Join-Path $SourceRoot 'UPSTREAM_FILES_SHA256.json') -Destination $release
     }
     [IO.File]::WriteAllText((Join-Path $release '.node-path'), $Node + "`n", (New-Object Text.UTF8Encoding($false)))
-
     Note 'Fetching/verifying pinned upstream source, installing dependencies and building.'
     Invoke-Checked $Node @((Join-Path $release 'scripts\bootstrap.mjs'), '--skip-browser')
     Note 'Installing the Chromium revision required by the pinned Playwright dependency.'
@@ -266,14 +264,12 @@ try {
         Invoke-Checked $Node @((Join-Path $release 'scripts\browser-setup.mjs'), 'check')
     }
     Invoke-Checked $Node @((Join-Path $release 'src\cli.mjs'), 'doctor')
-
     $installedBin = Join-Path $Prefix 'bin'
     Copy-Item -LiteralPath (Join-Path $release 'scripts\windows\launcher.mjs') -Destination (Join-Path $installedBin 'm365proxy-launcher.mjs') -Force
     Copy-Item -LiteralPath (Join-Path $release 'scripts\windows\launcher.cmd') -Destination (Join-Path $installedBin 'm365proxy.cmd') -Force
     $currentTmp = Join-Path $Prefix ('.current-' + [Guid]::NewGuid().ToString('N') + '.tmp')
     [IO.File]::WriteAllText($currentTmp, $release + "`n", (New-Object Text.UTF8Encoding($false)))
     Move-Item -LiteralPath $currentTmp -Destination (Join-Path $Prefix 'current.txt') -Force
-
     if (-not $BinDir.TrimEnd('\').Equals($installedBin.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)) {
         New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
         $target = Join-Path $installedBin 'm365proxy.cmd'
@@ -289,7 +285,6 @@ try {
     }
     if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Recurse -Force -ErrorAction SilentlyContinue }
 }
-
 $launcher = Join-Path $BinDir 'm365proxy.cmd'
 if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) { Fail 'Installation completed but the launcher was not created.' }
 & $launcher --help
